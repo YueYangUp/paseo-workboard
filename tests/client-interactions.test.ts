@@ -142,7 +142,9 @@ import {
   TaskCard,
   ArchivePage,
 } from "../client/WorkboardScreen";
-import { BoardView } from "../client/BoardView";
+import { BoardView, displayCardsForStage } from "../client/BoardView";
+import { ProjectBoardView } from "../client/ProjectBoardView";
+import { ToolbarSelect } from "../client/ToolbarSelect";
 import { ListView } from "../client/ListView";
 import { QuickCreate } from "../client/QuickCreate";
 import { useDragHandle } from "../client/drag-handle";
@@ -2902,4 +2904,244 @@ it("renders confirmation details between its summary and actions without changin
   ).props.onPress();
   expect(close).toHaveBeenCalledOnce();
   expect(confirm).not.toHaveBeenCalled();
+});
+
+it("routes project grouping to the board and leaves the list in its original status layout", () => {
+  const screen = host();
+  find(
+    screen.render(),
+    (e) => e.type === ToolbarSelect && e.props.id === "workboard-group-menu",
+  ).props.onSelect("project");
+  expect(named(screen.render(), "ProjectBoardView")).toBeDefined();
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  expect(named(screen.render(), "ListView")).toBeDefined();
+  expect(elements(screen.render()).some((e) => e.type === ToolbarSelect)).toBe(
+    false,
+  );
+  byID(screen.render(), "workboard-view-board").props.onPress();
+  expect(named(screen.render(), "ProjectBoardView")).toBeDefined();
+});
+
+it("project lanes retain full native order for mutations while scoping displayed cards", () => {
+  runtime.query.data = board([
+    {
+      ...card("one", "todo", "w1"),
+      projectId: "p1",
+      projectName: "Project one",
+    },
+    {
+      ...card("two", "review", "w2"),
+      projectId: "p2",
+      projectName: "Project two",
+    },
+  ]);
+  const screen = host();
+  find(
+    screen.render(),
+    (e) => e.type === ToolbarSelect && e.props.id === "workboard-group-menu",
+  ).props.onSelect("project");
+  const routed = named(screen.render(), "ProjectBoardView");
+  const lane = mount(ProjectBoardView, routed.props);
+  const tree = lane.render();
+  const boards = elements(tree).filter((e) => e.type === BoardView);
+  expect(boards.map((e) => e.props.cards.map((c: Card) => c.id))).toEqual([
+    ["one"],
+    ["two"],
+  ]);
+  expect(boards.every((e) => e.props.fullCards.length === 2)).toBe(true);
+  boards[0].props.onCreateTask();
+  expect(named(screen.render(), "TaskModal").props.form.projectId).toBe("p1");
+
+  expect(boards.every((e) => e.props.onStage === routed.props.onStage)).toBe(
+    true,
+  );
+  byLabel(tree, "折叠分组: Project one").props.onPress();
+  const next = mount(
+    ProjectBoardView,
+    named(screen.render(), "ProjectBoardView").props,
+  );
+  expect(
+    elements(next.render()).filter((e) => e.type === BoardView),
+  ).toHaveLength(1);
+});
+
+it("priority sorting stays inside status columns and never overwrites manual order", () => {
+  const cards = [
+    card("normal"),
+    { ...card("high"), priority: "high" as const },
+    { ...card("other", "review"), priority: "high" as const },
+  ];
+  const props = {
+    cards,
+    cardOrderByStage: { todo: ["normal", "high"] },
+    priorityFirst: true,
+  };
+  expect(displayCardsForStage(props, "todo").map((c) => c.id)).toEqual([
+    "high",
+    "normal",
+  ]);
+  expect(
+    displayCardsForStage({ ...props, priorityFirst: false }, "todo").map(
+      (c) => c.id,
+    ),
+  ).toEqual(["normal", "high"]);
+  expect(props.cardOrderByStage.todo).toEqual(["normal", "high"]);
+});
+
+it("toolbar dropdown selects and dismisses choices without changing saved card order", () => {
+  const onSelect = vi.fn();
+  const control = mount(ToolbarSelect, {
+    id: "sort",
+    title: "排序方式",
+    label: "默认排序",
+    value: "default",
+    options: [
+      { value: "default", label: "默认排序" },
+      { value: "priority", label: "优先级排序" },
+    ],
+    onSelect,
+    theme,
+  });
+  const trigger = byID(control.render(), "sort");
+  const focus = vi.fn();
+  trigger.props.ref.current = {
+    measureInWindow: (cb: any) => cb(1300, 30, 90, 36),
+    focus,
+  };
+  trigger.props.onPress();
+  const open = control.render();
+  const menu = byID(open, "sort-options");
+  expect(menu.props.style.left + menu.props.style.width).toBeLessThanOrEqual(
+    1432,
+  );
+  expect(
+    byID(open, "sort-option-default").props.accessibilityState.checked,
+  ).toBe(true);
+  byID(open, "sort-option-priority").props.onPress();
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith("priority");
+  expect(() => byID(control.render(), "sort-options")).toThrow();
+  expect(focus).toHaveBeenCalled();
+  byID(control.render(), "sort").props.onPress();
+  byID(control.render(), "sort-backdrop").props.onPress();
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  expect(() => byID(control.render(), "sort-options")).toThrow();
+});
+
+it("toolbar sorting uses Default order for the existing saved order and keeps project grouping", () => {
+  const screen = host();
+  const menu = (id: string) =>
+    find(screen.render(), (e) => e.type === ToolbarSelect && e.props.id === id);
+  menu("workboard-group-menu").props.onSelect("project");
+  const before = structuredClone(runtime.query.data.cardOrderByStage);
+  expect(menu("workboard-sort-menu").props.label).toBe("默认排序");
+  menu("workboard-sort-menu").props.onSelect("priority");
+  expect(menu("workboard-sort-menu").props.label).toBe("优先级排序");
+  expect(named(screen.render(), "ProjectBoardView").props.priorityFirst).toBe(
+    true,
+  );
+  menu("workboard-sort-menu").props.onSelect("default");
+  expect(menu("workboard-group-menu").props.label).toBe("项目分组");
+  expect(named(screen.render(), "ProjectBoardView").props.priorityFirst).toBe(
+    false,
+  );
+  expect(runtime.query.data.cardOrderByStage).toEqual(before);
+  expect(runtime.mutation).not.toHaveBeenCalled();
+});
+
+it("priority editor previews, validates, saves and resets a level without changing the other levels", async () => {
+  const { PriorityEditor } = await import("../client/PrioritySettings");
+  const { DEFAULT_PRIORITY_STYLES } = await import("../shared/model");
+  const onChange = vi.fn().mockResolvedValue(false);
+  const onClose = vi.fn();
+  const editor = mount(PriorityEditor, {
+    priority: "normal",
+    value: DEFAULT_PRIORITY_STYLES,
+    onChange,
+    onClose,
+    disabled: false,
+    theme,
+    t: strings("zh"),
+  });
+  byID(editor.render(), "workboard-priority-name").props.onChangeText(" ");
+  expect(byID(editor.render(), "workboard-save-priority").props.disabled).toBe(
+    true,
+  );
+  byID(editor.render(), "workboard-priority-name").props.onChangeText("计划中");
+  byLabel(editor.render(), "颜色: 紫色").props.onPress();
+  await byID(editor.render(), "workboard-save-priority").props.onPress();
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...DEFAULT_PRIORITY_STYLES,
+    normal: { name: "计划中", color: "violet" },
+  });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(
+    elements(editor.render()).some(
+      (e) => e.props.accessibilityRole === "alert",
+    ),
+  ).toBe(true);
+  onChange.mockResolvedValue(true);
+  byID(editor.render(), "workboard-reset-priority").props.onPress();
+  expect(
+    byID(editor.render(), "workboard-priority-name").props.initialValue,
+  ).toBe("普通");
+  byID(editor.render(), "workboard-priority-name").props.onChangeText(
+    "普通任务",
+  );
+  expect(
+    byID(editor.render(), "workboard-priority-name").props.initialValue,
+  ).toBe("普通任务");
+  byID(editor.render(), "workboard-reset-priority").props.onPress();
+  await byID(editor.render(), "workboard-save-priority").props.onPress();
+  expect(onChange).toHaveBeenLastCalledWith(DEFAULT_PRIORITY_STYLES);
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+it("priority settings keep the original save context when settings update during an edit", async () => {
+  const { PrioritySettings } = await import("../client/PrioritySettings");
+  const original = vi.fn(),
+    newer = vi.fn();
+  const panel = mount(PrioritySettings, {
+    onChange: original,
+    disabled: false,
+    theme,
+    t: strings("zh"),
+  });
+  byID(panel.render(), "workboard-edit-priority-high").props.onPress();
+  panel.props.onChange = newer;
+  expect(named(panel.render(), "PriorityEditor").props.onChange).toBe(original);
+});
+
+it("priority badges use three distinct theme-aware tones and custom labels in picker actions", async () => {
+  const { PriorityBadge, PriorityPicker } = await import(
+    "../client/PriorityPicker"
+  );
+  const { DEFAULT_PRIORITY_STYLES, PRIORITIES } = await import(
+    "../shared/model"
+  );
+  for (const surface0 of ["#ffffff", "#121212"]) {
+    const tones = PRIORITIES.map(
+      (value) =>
+        PriorityBadge({
+          value,
+          theme: { ...theme, colors: { ...theme.colors, surface0 } },
+          t: strings("en"),
+        }).props.style.borderColor,
+    );
+    expect(new Set(tones).size).toBe(3);
+  }
+  const onChange = vi.fn().mockResolvedValue(true);
+  const picker = mount(PriorityPicker, {
+    title: "Task",
+    value: "normal",
+    priorityStyles: {
+      ...DEFAULT_PRIORITY_STYLES,
+      high: { name: "急件", color: "orange" },
+    },
+    onChange,
+    disabled: false,
+    theme,
+    t: strings("zh"),
+  });
+  await byLabel(picker.render(), "急件").props.onPress();
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("high");
 });

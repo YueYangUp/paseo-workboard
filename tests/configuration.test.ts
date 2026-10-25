@@ -271,7 +271,7 @@ it("cleans polluted v6 evidence, initializes current fields and permits real obs
     },
     6,
   );
-  expect(migrated.schemaVersion).toBe(9);
+  expect(migrated.schemaVersion).toBe(10);
   expect(migrated.settings).toMatchObject({
     archiveAfterDays: 30,
     defaultDraftGroup: null,
@@ -610,7 +610,7 @@ it.each([1, 2, 3, 4, 5, 6, 7])(
       { schemaVersion: version, settings: { defaultStartGroup: "review" } },
       version,
     );
-    expect(result.schemaVersion).toBe(9);
+    expect(result.schemaVersion).toBe(10);
     expect(result.settings.defaultStartWorkGroup).toBeNull();
     if (version === 7) expect(result.settings.defaultStartGroup).toBe("review");
   },

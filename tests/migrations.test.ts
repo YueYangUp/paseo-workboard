@@ -381,7 +381,7 @@ it("rejects ambiguous labels or identities and missing default destinations", ()
   ).toBe(false);
 });
 
-it("migrates v6 through v9 without discarding observed agents, notes or preferences", () => {
+it("migrates v6 through the current schema without discarding observed agents, notes or preferences", () => {
   const task = {
     ...newTask("t", "Task", "2026-09-01T00:00:00Z"),
     description: "Keep notes",
@@ -471,7 +471,7 @@ it("adds a noncolliding canceled group for valid legacy settings that removed al
   }
 });
 
-it("runs the complete v1 to v9 chain with new settings and empty merge records", () => {
+it("runs the complete v1 to the current schema chain with new settings and empty merge records", () => {
   const result = migrateData(
     {
       schemaVersion: 1,
@@ -492,3 +492,32 @@ it("runs the complete v1 to v9 chain with new settings and empty merge records",
   expect(result.tasks[0]).toMatchObject({ id: "legacy", mergedDrafts: [] });
   expect(result.settings.groups).toEqual(DEFAULT_GROUPS);
 });
+
+it("upgrades priority metadata without changing tasks, order, archive rules or pin ownership", () => {
+  const previous = {
+    schemaVersion: 9,
+    revision: 12,
+    serverId: "fixture-host",
+    settings: settingsSchema.parse({
+      archiveDoneEnabled: true,
+      archiveDoneAfterDays: 45,
+    }),
+    tasks: [newTask("draft", "Existing draft", "2026-09-23T00:00:00Z")],
+    cardOrderByStage: { todo: ["draft"] },
+    autoPins: { "workspace-1": "2026-09-23T00:00:00Z" },
+  };
+  const migrated = migrateData(previous, 9);
+  expect(migrated).toEqual({ ...previous, schemaVersion: DATA_SCHEMA_VERSION });
+  expect(migrated.tasks[0].priority).toBeUndefined();
+  expect(migrateData(migrated, DATA_SCHEMA_VERSION)).toEqual(migrated);
+});
+
+it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+  "migrates every supported storage version %s to the priority-aware schema",
+  (version) => {
+    const migrated = migrateData({ schemaVersion: version }, version);
+    expect(migrated.schemaVersion).toBe(DATA_SCHEMA_VERSION);
+    expect(migrateData(migrated, DATA_SCHEMA_VERSION)).toEqual(migrated);
+    expect(migrated.settings.priorityStyles).toBeUndefined();
+  },
+);
