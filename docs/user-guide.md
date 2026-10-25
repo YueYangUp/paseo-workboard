@@ -133,3 +133,15 @@ When stored data has an unsupported version or cannot be parsed, the board shows
 - Local filters, view choice, separate board/list collapsed groups, and board column widths are stored per client and host; they are not shared task data.
 - Workspace labels and native archive/pin operations can change outside Workboard. The plugin rechecks state where possible, but native APIs do not provide every atomic operation.
 - Paseo refuses the provider-subagent API for archived parents, and its pi provider replays history without per-row timestamps, so Workboard retains displayed bounds and defers automatic archive when child inventory is incomplete or conversation evidence cannot safely bound parent and child history.
+
+## Project grouping and priorities
+
+The toolbar separates the **Board / List** segmented control from two small dropdowns. The grouping trigger displays **By status** or **By project**; the sorting trigger displays **Default order** or **Priority first**. Menus show a check beside the selected choice and close on selection, outside press or Escape.
+
+In **Board** view, choose **Group by project** for one collapsible lane per native project. Each lane keeps the existing status columns and card drag actions. **Group by status** returns to the flat status board. The List view retains its original status layout. Search and filters apply before grouping, and lane headings show matching and total task counts. Creating a task from a project's lane preselects that project.
+
+Click the **Flag / Normal** control on a card to choose **High**, **Normal** or **Low**. Historical unset values mean Normal. Defaults are red for High, blue for Normal and gray for Low. In **Settings → Priorities**, edit each level’s name (1–24 characters) and choose from ten theme-aware colors, with a preview and a per-level reset. These settings are saved on the host and apply to cards and menus across clients. Renaming or recoloring preserves priority levels and sorting. Priorities are stored in Workboard task data on the daemon and do not write native labels. In Board view, choose **Priority first** from the sorting dropdown to sort each status column within its project by priority. Dragging between status columns still works; manual ordering within a sorted column is paused until sorting is turned off. Choosing **Default order** restores the saved task order.
+
+![Project board lanes and task priorities](../images/project-priority-en.png)
+
+![Customize priority names and colors](../images/priority-settings-en.png)

@@ -30,7 +30,7 @@ Agent activity is a separate projection. A reply finishing never marks a task do
 
 ## Persistence and concurrency
 
-Host settings store schema version 9 (declared once in `shared/model.ts`), including tasks, groups, preferences, binding/archive intents and owned pin timestamps. The conversation record keeps display evidence and gate evidence apart, archive rules carry their own delays, default destinations are stored per use, and merged drafts are recorded per task. The store validates data and writes against the host settings revision. Migrations preserve existing records; unsupported or invalid data stops initialization and automatic retries, with a visible board error. Transient connection failures still retry every ten seconds. Data is never silently replaced.
+Host settings store schema version 10 (declared once in `shared/model.ts`), including tasks, groups, preferences, binding/archive intents and owned pin timestamps. The conversation record keeps display evidence and gate evidence apart, archive rules carry their own delays, default destinations are stored per use, and merged drafts are recorded per task. The store validates data and writes against the host settings revision. Migrations preserve existing records; unsupported or invalid data stops initialization and automatic retries, with a visible board error. Transient connection failures still retry every ten seconds. Data is never silently replaced.
 
 Every migration is a pure step in the `shared/migrations.ts` chain, must be idempotent on current data, and must keep old records usable. Rules:
 
@@ -102,3 +102,11 @@ Paseo has no public plugin locale API. `client/paseo-language.ts` reads the Web/
 View choice defaults to Board, and list collapsed groups start expanded. View choice, separate board/list collapsed groups, board column widths, and filters are stored per host in browser `localStorage`, independently from daemon settings. View preferences do not add RPC or data-schema fields. Storage failures leave the current view usable. These preferences are not synchronized between clients. Native mobile persistence and touch behavior are outside the supported platform coverage.
 
 See [contributing](../CONTRIBUTING.md) for changes to these boundaries.
+
+## Project grouping and priorities
+
+Task priorities are optional version-10 metadata; serialized writes compare `updatedAt`. Project board lanes group by native project ID and reuse the original BoardView for each project's visible cards, retaining the full unfiltered task set for native order checks. Priority sorting is display-only and stable; it pauses manual same-column reordering while retaining cross-column status moves. Switching back to List always renders the original ListView. Project fold state remains host-scoped and independent of list folds. No host bridge, archive or label behavior changes.
+
+Priority appearance is optional `settings.priorityStyles` metadata with fixed `high`/`normal`/`low` keys. Null names use translated defaults; palette colors resolve per theme. Settings mutations retain the existing expected-settings concurrency check. Editors capture the settings version when opened, so a concurrent settings edit is rejected rather than overwritten. Display changes never rewrite task priorities or card order.
+
+The v9→v10 migration retains task records, archive rules, pin ownership and saved ordering. Missing priority metadata displays as Normal; missing appearance settings use translated names and theme-aware defaults. Older plugin versions reject schema 10, so reverting source alone is not a supported storage downgrade.
