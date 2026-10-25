@@ -8,6 +8,7 @@ import {
   isTerminalGroup,
   type Board,
   type Card,
+  type Priority,
 } from "../shared/model";
 import {
   attentionReasons,
@@ -19,6 +20,7 @@ import {
 import { strings } from "./strings";
 import { groupColor, supplementalColor } from "./colors";
 import { HintButton } from "./Hint";
+import { PriorityPicker } from "./PriorityPicker";
 
 function CardAction({
   theme,
@@ -60,6 +62,7 @@ export function TaskItem({
   onCancelBinding,
   onDetachDraft,
   onUndo,
+  onPriorityChange,
   compact = false,
   showDragHandle = false,
   presentation = "card",
@@ -78,11 +81,25 @@ export function TaskItem({
   onCancelBinding(): void;
   onDetachDraft(draftId: string): void;
   onUndo?(): Promise<void>;
+  onPriorityChange?(priority: Priority): Promise<boolean>;
   compact?: boolean;
   showDragHandle?: boolean;
   presentation?: "card" | "row";
 }) {
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const priorityPicker = (
+    <PriorityPicker
+      title={card.title}
+      value={card.priority}
+      priorityStyles={board.settings.priorityStyles}
+      onChange={onPriorityChange}
+      disabled={
+        disabled || pending || card.archived !== null || card.binding !== null
+      }
+      theme={theme}
+      t={t}
+    />
+  );
   const [actionsOpen, setActionsOpen] = useState(false);
   const [titleHovered, setTitleHovered] = useState(false);
   const toast = useToast();
@@ -538,6 +555,7 @@ export function TaskItem({
         ]}
       >
         <View style={[styles.rowMain]}>
+          {priorityPicker}
           <View style={styles.rowTitleBlock}>
             <HintButton
               hint={isDraft ? t.edit : t.openWorkspace}
@@ -706,6 +724,7 @@ export function TaskItem({
       <View
         style={[styles.cardTitleRow, { paddingRight: showDragHandle ? 30 : 0 }]}
       >
+        {priorityPicker}
         <HintButton
           hint={isDraft ? t.edit : t.openWorkspace}
           onHoverIn={() => setTitleHovered(true)}

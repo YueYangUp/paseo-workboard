@@ -3,6 +3,24 @@ import type { Group, GroupColor } from "../shared/model";
 export type Language = "zh" | "en";
 
 const zh = {
+  grouping: "分组方式",
+  sorting: "排序方式",
+  projectGrouping: "项目分组",
+  statusGrouping: "状态分组",
+  defaultSort: "默认排序",
+  groupByProject: "按项目分组",
+  groupByStatus: "按状态分组",
+  priorityFirst: "优先级排序",
+  priority: "优先级",
+  priorities: { high: "高", normal: "普通", low: "低" },
+  prioritySettings: "优先级",
+  prioritySettingsHint:
+    "从上到下按优先级排序。自定义名称和颜色会同步到所有任务，不改变已有任务的等级和默认顺序。",
+  priorityName: "名称",
+  priorityColor: "颜色",
+  priorityNameInvalid: "请输入 1–24 个字符的名称。",
+  prioritySaveFailed: "保存失败，请刷新后重试。",
+  resetPriority: "恢复此档默认值",
   boardView: "看板",
   listView: "列表",
   expandAll: "展开全部",
@@ -431,6 +449,24 @@ const zh = {
 };
 
 const en: typeof zh = {
+  grouping: "Grouping",
+  sorting: "Sorting",
+  projectGrouping: "By project",
+  statusGrouping: "By status",
+  defaultSort: "Default order",
+  groupByProject: "Group by project",
+  groupByStatus: "Group by status",
+  priorityFirst: "Priority first",
+  priority: "Priority",
+  priorities: { high: "High", normal: "Normal", low: "Low" },
+  prioritySettings: "Priorities",
+  prioritySettingsHint:
+    "Ordered from highest to lowest. Custom names and colors apply to all tasks without changing their levels or default order.",
+  priorityName: "Name",
+  priorityColor: "Color",
+  priorityNameInvalid: "Enter a name of 1–24 characters.",
+  prioritySaveFailed: "Could not save. Refresh and try again.",
+  resetPriority: "Restore this level’s defaults",
   boardView: "Board",
   listView: "List",
   expandAll: "Expand all",

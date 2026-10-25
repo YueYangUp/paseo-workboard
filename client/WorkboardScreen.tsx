@@ -45,8 +45,11 @@ import {
 } from "./board-utils";
 import { groupTitle, stageTitle, strings } from "./strings";
 import { GroupEditor, GroupSettings, newGroup } from "./GroupSettings";
+import { PrioritySettings } from "./PrioritySettings";
 import { BoardView } from "./BoardView";
 import { ListView } from "./ListView";
+import { ProjectBoardView } from "./ProjectBoardView";
+import { ToolbarSelect } from "./ToolbarSelect";
 import { TaskItem } from "./TaskItem";
 export { TaskItem as TaskCard } from "./TaskItem";
 import {
@@ -510,7 +513,14 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
       durationMs: hidden ? 6000 : 2500,
     });
   };
-  const TaskView = viewPreferences.mode === "list" ? ListView : BoardView;
+  const projectBoard =
+    viewPreferences.mode === "board" && viewPreferences.groupBy === "project";
+  const TaskView =
+    viewPreferences.mode === "list"
+      ? ListView
+      : projectBoard
+        ? ProjectBoardView
+        : BoardView;
   const latestMove = latestMoveUndoId
     ? moveUndos.get(latestMoveUndoId)
     : undefined;
@@ -604,7 +614,12 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
           )}
         </View>
         <View style={styles.toolbarActions}>
-          <View style={styles.viewSwitch}>
+          <View
+            style={[
+              styles.viewSwitch,
+              { backgroundColor: props.theme.colors.surface1 },
+            ]}
+          >
             {(["board", "list"] as const).map((mode) => (
               <Pressable
                 key={mode}
@@ -636,6 +651,48 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
               </Pressable>
             ))}
           </View>
+          {viewPreferences.mode === "board" && (
+            <View style={styles.boardDisplayControls}>
+              <ToolbarSelect
+                id="workboard-group-menu"
+                title={t.grouping}
+                label={
+                  viewPreferences.groupBy === "project"
+                    ? t.projectGrouping
+                    : t.statusGrouping
+                }
+                value={viewPreferences.groupBy ?? "status"}
+                options={[
+                  { value: "status", label: t.groupByStatus },
+                  { value: "project", label: t.groupByProject },
+                ]}
+                onSelect={(groupBy) =>
+                  updateViewPreferences({
+                    groupBy: groupBy === "project" ? "project" : "status",
+                  })
+                }
+                theme={props.theme}
+              />
+              <ToolbarSelect
+                id="workboard-sort-menu"
+                title={t.sorting}
+                label={
+                  viewPreferences.priorityFirst
+                    ? t.priorityFirst
+                    : t.defaultSort
+                }
+                value={viewPreferences.priorityFirst ? "priority" : "default"}
+                options={[
+                  { value: "default", label: t.defaultSort },
+                  { value: "priority", label: t.priorityFirst },
+                ]}
+                onSelect={(sort) =>
+                  updateViewPreferences({ priorityFirst: sort === "priority" })
+                }
+                theme={props.theme}
+              />
+            </View>
+          )}
           <HintButton
             hint={t.attention}
             accessibilityRole="button"
@@ -905,9 +962,28 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
         />
       )}
       <TaskView
-        collapsed={new Set(viewPreferences.collapsedListGroups)}
-        onCollapsedChange={(collapsedListGroups) =>
-          updateViewPreferences({ collapsedListGroups })
+        onCreateInProject={
+          writesDisabled
+            ? undefined
+            : (projectId: string | null) =>
+                setDraft({ title: "", description: "", projectId })
+        }
+        priorityFirst={
+          viewPreferences.mode === "board" && viewPreferences.priorityFirst
+        }
+        collapsed={
+          new Set(
+            projectBoard
+              ? (viewPreferences.collapsedProjectGroups ?? [])
+              : viewPreferences.collapsedListGroups,
+          )
+        }
+        onCollapsedChange={(ids) =>
+          updateViewPreferences(
+            projectBoard
+              ? { collapsedProjectGroups: ids }
+              : { collapsedListGroups: ids },
+          )
         }
         quickCreateErrors={
           new Set(
@@ -1061,6 +1137,7 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
             disabled={writesDisabled}
             pending={
               pendingMutationIds.has(`stage:${card.id}`) ||
+              pendingMutationIds.has(`priority:${card.id}`) ||
               pendingMutationIds.has(`card-order:${card.stage}`)
             }
             compact={props.layout.compact}
@@ -1086,6 +1163,14 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
                 description: card.description,
                 projectId: card.projectId,
               })
+            }
+            onPriorityChange={async (priority) =>
+              !!(await mutate({
+                action: "priority",
+                taskId: card.id,
+                updatedAt: card.updatedAt,
+                priority,
+              }))
             }
             onStart={() => setStarting({ card })}
             onStatus={() => setStatusCard(card)}
@@ -2681,6 +2766,15 @@ export function SettingsPage({
               })}
             </View>
           </SettingsSection>
+          <PrioritySettings
+            value={settings.priorityStyles}
+            onChange={async (priorityStyles) =>
+              !!(await persist({ ...settings, priorityStyles }, "priorities"))
+            }
+            disabled={controlDisabled("priorities")}
+            t={t}
+            theme={theme}
+          />
           <GroupSettings
             board={{ ...board, settings }}
             groups={groups}
@@ -2827,7 +2921,13 @@ const styles = StyleSheet.create({
   archiveCandidateList: { maxHeight: 280 },
   archiveCandidateRows: { gap: 12, paddingVertical: 8 },
   archiveCandidate: { gap: 4, padding: 12, borderWidth: 1, borderRadius: 8 },
-  viewSwitch: { flexDirection: "row", gap: 2 },
+  viewSwitch: { flexDirection: "row", gap: 2, padding: 2, borderRadius: 8 },
+  boardDisplayControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: 8,
+  },
   screen: { flex: 1, minHeight: 0 },
   filterSummary: {
     paddingHorizontal: 12,
@@ -2853,6 +2953,8 @@ const styles = StyleSheet.create({
   toolbarLeadingCompact: { width: "100%" },
   toolbarActions: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    maxWidth: "100%",
     alignItems: "center",
     gap: 4,
     marginLeft: "auto",

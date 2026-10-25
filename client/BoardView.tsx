@@ -32,6 +32,7 @@ import {
   stageAtX,
   moveCardToAnchor,
 } from "./board-utils";
+import { sortPriorityCards } from "./project-groups";
 import { groupTitle, stageTitle, strings } from "./strings";
 import {
   dragCursor,
@@ -70,6 +71,7 @@ type Gesture = {
 };
 export type BoardViewProps = {
   hostId: string;
+  priorityFirst?: boolean;
   cards: Card[];
   fullCards: Card[];
   cardOrderByStage: CardOrderByStage;
@@ -105,6 +107,14 @@ export type BoardViewProps = {
   renderCard(card: Card, showDragHandle: boolean): ReactNode;
   groupColor(group: Group): string;
 };
+
+export function displayCardsForStage(
+  props: Pick<BoardViewProps, "cards" | "cardOrderByStage" | "priorityFirst">,
+  stage: Stage,
+): Card[] {
+  const cards = cardsForStage(props.cards, stage, props.cardOrderByStage);
+  return props.priorityFirst ? sortPriorityCards(cards) : cards;
+}
 
 export function BoardView(props: BoardViewProps) {
   const {
@@ -238,7 +248,7 @@ export function BoardView(props: BoardViewProps) {
   };
   useEffect(() => {
     cancel();
-  }, [disabled, compact, groupSignature, props.filterKey]);
+  }, [disabled, compact, groupSignature, props.filterKey, props.priorityFirst]);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -257,7 +267,7 @@ export function BoardView(props: BoardViewProps) {
     );
   };
   const anchorAtY = (current: Gesture, y: number) => {
-    if (!current.card) return null;
+    if (!current.card || latest.current.priorityFirst) return null;
     const list = lists.current[current.card.stage];
     if (!list) return null;
     const contentY = y - list.top + list.scrollY;
@@ -281,6 +291,7 @@ export function BoardView(props: BoardViewProps) {
   const moveCardRelative = async (card: Card, direction: number) => {
     if (
       latest.current.disabled ||
+      latest.current.priorityFirst ||
       latest.current.orderPending?.has(card.stage) ||
       card.binding ||
       card.archived
@@ -413,11 +424,9 @@ export function BoardView(props: BoardViewProps) {
       widths: widthsRef.current,
       expectedCardOrder: card ? completeOrder(card.stage) : [],
       visibleCardIds: card
-        ? cardsForStage(
-            latest.current.cards,
-            card.stage,
-            latest.current.cardOrderByStage,
-          ).map((item) => item.id)
+        ? displayCardsForStage(latest.current, card.stage).map(
+            (item) => item.id,
+          )
         : [],
       filterKey: latest.current.filterKey,
     };
@@ -426,11 +435,7 @@ export function BoardView(props: BoardViewProps) {
       Object.fromEntries(
         latest.current.groups.map((group) => [
           group.id,
-          cardsForStage(
-            latest.current.cards,
-            group.id,
-            latest.current.cardOrderByStage,
-          ),
+          displayCardsForStage(latest.current, group.id),
         ]),
       ),
     );
@@ -491,7 +496,11 @@ export function BoardView(props: BoardViewProps) {
         return;
       }
       if (destination === current.card.stage) {
-        if (latest.current.orderPending?.has(destination)) return;
+        if (
+          latest.current.priorityFirst ||
+          latest.current.orderPending?.has(destination)
+        )
+          return;
         const anchor = anchorAtY(current, y);
         if (anchor) {
           const next = moveCardToAnchor(
@@ -615,7 +624,7 @@ export function BoardView(props: BoardViewProps) {
                         selectCompactGroup(group.id, key),
                       )}
                       accessibilityRole="radio"
-                      accessibilityLabel={`${groupTitle(group, t)} (${cardsForStage(cards, group.id, props.cardOrderByStage).length})`}
+                      accessibilityLabel={`${groupTitle(group, t)} (${displayCardsForStage(props, group.id).length})`}
                       aria-checked={stage === group.id}
                       accessibilityState={{ checked: stage === group.id }}
                       tabIndex={stage === group.id ? 0 : -1}
@@ -648,11 +657,7 @@ export function BoardView(props: BoardViewProps) {
                         ]}
                       >
                         {groupTitle(group, t)} (
-                        {
-                          cardsForStage(cards, group.id, props.cardOrderByStage)
-                            .length
-                        }
-                        )
+                        {displayCardsForStage(props, group.id).length})
                       </Text>
                     </Pressable>
                   ))}
@@ -700,8 +705,8 @@ export function BoardView(props: BoardViewProps) {
             <ScrollView key={stage} contentContainerStyle={styles.compactList}>
               {selectedGroup?.kind === "todo" &&
                 props.renderQuickCreate?.(selectedGroup)}
-              {cardsForStage(cards, stage, props.cardOrderByStage).length ? (
-                cardsForStage(cards, stage, props.cardOrderByStage).map(
+              {displayCardsForStage(props, stage).length ? (
+                displayCardsForStage(props, stage).map(
                   (card, index, visible) => (
                     <View
                       key={card.id}
@@ -720,6 +725,7 @@ export function BoardView(props: BoardViewProps) {
                             accessibilityLabel={`${direction < 0 ? t.moveCardUp : t.moveCardDown}: ${card.title}`}
                             disabled={
                               disabled ||
+                              props.priorityFirst ||
                               props.orderPending?.has(card.stage) ||
                               !!card.archived ||
                               !!card.binding ||
@@ -767,8 +773,7 @@ export function BoardView(props: BoardViewProps) {
           >
             {groups.map((group) => {
               const stageCards =
-                held?.[group.id] ??
-                cardsForStage(cards, group.id, props.cardOrderByStage);
+                held?.[group.id] ?? displayCardsForStage(props, group.id);
               const isCollapsed = collapsed.has(group.id);
               return (
                 <BoardColumn
@@ -1169,11 +1174,7 @@ export function BoardView(props: BoardViewProps) {
                       style={{ flex: 1, color: theme.colors.foreground }}
                     >
                       {groupTitle(group, t)} (
-                      {
-                        cardsForStage(cards, group.id, props.cardOrderByStage)
-                          .length
-                      }
-                      )
+                      {displayCardsForStage(props, group.id).length})
                     </Text>
                     {collapsed.has(group.id) && !compact && (
                       <Icon

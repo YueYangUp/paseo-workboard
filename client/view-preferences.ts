@@ -4,6 +4,9 @@ export type ViewMode = "board" | "list";
 export type ViewPreferences = {
   mode: ViewMode;
   collapsedListGroups: string[];
+  groupBy?: "status" | "project";
+  priorityFirst?: boolean;
+  collapsedProjectGroups?: string[];
 };
 type StorageReader = { getItem(key: string): string | null };
 type StorageWriter = { setItem(key: string, value: string): void };
@@ -24,6 +27,24 @@ export function loadViewPreferencesFrom(
       return defaults();
     return {
       mode: value.mode === "list" ? "list" : "board",
+      ...(value.groupBy === "project" || value.groupBy === "status"
+        ? { groupBy: value.groupBy }
+        : {}),
+      ...(typeof value.priorityFirst === "boolean"
+        ? { priorityFirst: value.priorityFirst }
+        : {}),
+      ...(Array.isArray(value.collapsedProjectGroups)
+        ? {
+            collapsedProjectGroups: [
+              ...new Set<string>(
+                value.collapsedProjectGroups.filter(
+                  (id: unknown): id is string =>
+                    typeof id === "string" && id.length > 0,
+                ),
+              ),
+            ],
+          }
+        : {}),
       collapsedListGroups: Array.isArray(value.collapsedListGroups)
         ? [
             ...new Set<string>(
