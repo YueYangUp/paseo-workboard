@@ -1180,7 +1180,15 @@ export class Workboard {
                 ? "detach-draft-archived"
                 : "Task is archived",
             );
-          if (input.action === "edit") {
+          if (input.action === "priority") {
+            await this.store.update((data) => {
+              const current = data.tasks.find((t) => t.id === task.id)!;
+              if (current.updatedAt !== input.updatedAt)
+                throw new Error("Task changed; refresh before saving");
+              current.priority = input.priority;
+              current.updatedAt = this.stamp(current.updatedAt);
+            });
+          } else if (input.action === "edit") {
             await this.store.update((data) => {
               const current = data.tasks.find((t) => t.id === task.id)!;
               if (current.updatedAt !== input.updatedAt)
