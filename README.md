@@ -16,10 +16,15 @@ Workboard brings active workspaces into one board, with one task per workspace. 
 - **Activity at a glance.** See Agent activity, conversation dates, and PR/MR, CI, and review information supplied by Paseo. Filter by project, activity, PR/MR condition, attention, or last conversation date.
 - **A configurable workflow.** Customize groups and their defaults, reorder tasks and groups by dragging or keyboard controls, and optionally pin in-progress workspaces in the sidebar.
 - **Optional automatic archiving.** Configure Done and Canceled rules independently to archive eligible workspaces after their respective delays from their last verified conversation, with activity and Git safety checks. Disabled by default.
+- **Project lanes and priorities.** Group the board by project, set task priorities, and switch between priority sorting and the saved default order. Customize priority names and colors in Settings.
 
 The interface follows Paseo's desktop/Web language and theme, with English and Chinese text and dates.
 
 ## See it in action
+
+The board can show one collapsible lane per project, with priority controls on each card. [Learn about grouping and priorities](docs/user-guide.md#project-grouping-and-priorities).
+
+![Project board lanes and task priorities](images/project-priority-en.png)
 
 The same tasks appear in the board and grouped list. Filters are shared; each view remembers its own collapsed groups.
 
