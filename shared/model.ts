@@ -54,6 +54,24 @@ export const GROUP_COLORS = [
   "red",
 ] as const;
 export type GroupColor = (typeof GROUP_COLORS)[number];
+export const PRIORITIES = ["high", "normal", "low"] as const;
+export const prioritySchema = z.enum(PRIORITIES);
+export type Priority = z.infer<typeof prioritySchema>;
+export const priorityStyleSchema = z.object({
+  name: z.string().trim().min(1).max(24).nullable(),
+  color: z.enum(GROUP_COLORS),
+});
+export const priorityStylesSchema = z.object({
+  high: priorityStyleSchema,
+  normal: priorityStyleSchema,
+  low: priorityStyleSchema,
+});
+export type PriorityStyles = z.infer<typeof priorityStylesSchema>;
+export const DEFAULT_PRIORITY_STYLES: PriorityStyles = {
+  high: { name: null, color: "red" },
+  normal: { name: null, color: "blue" },
+  low: { name: null, color: "gray" },
+};
 export const groupSchema = z.object({
   id: stageSchema,
   name: z.string().trim().min(1).max(80).nullable().default(null),
@@ -151,6 +169,7 @@ const preferences = {
 };
 export const settingsSchema = z.object({
   ...preferences,
+  priorityStyles: priorityStylesSchema.optional(),
   groups: groupsSchema.default(DEFAULT_GROUPS),
   groupOrder: groupOrderSchema.default([]),
 });
@@ -318,7 +337,7 @@ export function conversationStatusFor(
  * The stored settings version. The plugin registers this same value, because the host only
  * migrates stored settings when the registered version differs from what it finds.
  */
-export const DATA_SCHEMA_VERSION = 9;
+export const DATA_SCHEMA_VERSION = 10;
 
 export const sourceSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -391,6 +410,7 @@ export const taskSchema = z.object({
   workspaceId: z.string().nullable(),
   title: z.string().min(1),
   description: z.string(),
+  priority: prioritySchema.optional(),
   projectId: z.string().nullable(),
   projectName: z.string(),
   createdAt: z.string(),
