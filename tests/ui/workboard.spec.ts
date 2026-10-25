@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { Board } from "../../shared/model";
+import { cardsForStage, type Board } from "../../shared/model";
 import { isTemporaryIntegrationHome } from "../integration/temporary-home";
 
 const run = promisify(execFile);
@@ -237,3 +237,143 @@ test("keeps archive delays visible while disabled and Cancel leaves the rule off
   ).toBeNull();
   expect(pageErrors).toEqual([]);
 });
+
+for (const width of [1440, 390]) {
+  test(`project lanes and custom priorities retain default order at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ colorScheme: width === 390 ? "dark" : "light" });
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    const runId = Date.now();
+    const prefix = width === 390 ? "workboard-order-" : "workboard-card-";
+    const titles = [
+      `Priority example A ${width} ${runId}`,
+      `Priority example B ${width} ${runId}`,
+    ];
+    for (const title of titles)
+      await client.invokePluginRpc(pluginId, "workboard.mutate", {
+        action: "create",
+        title,
+        description: "",
+        projectId: null,
+      });
+    let before = await snapshot();
+    const ids = titles.map(
+      (title) => before.cards.find((card) => card.title === title)!.id,
+    );
+    const stage = before.cards.find((card) => card.id === ids[0])!.stage;
+    const expectedOrder = cardsForStage(
+      before.cards,
+      stage,
+      before.cardOrderByStage,
+    ).map((card) => card.id);
+    await client.invokePluginRpc(pluginId, "workboard.mutate", {
+      action: "reorder-cards",
+      taskId: ids[0],
+      stage,
+      expectedOrder,
+      cardOrder: expectedOrder,
+    });
+    before = await snapshot();
+    await openWorkboard(page);
+    await page.setViewportSize({ width, height: 1000 });
+    await page.getByTestId("workboard-view-board").click();
+    await page.getByTestId("workboard-group-menu").click();
+    await page
+      .getByRole("radio", { name: "Group by project", exact: true })
+      .click();
+    const lane = page.getByTestId("workboard-project-lane-project:none");
+    if (width === 390)
+      await lane.getByRole("radio", { name: /^To do \(/ }).click();
+    await expect(lane.getByTestId(`${prefix}${ids[0]}`)).toBeVisible();
+    await page
+      .getByRole("button", {
+        name: `Priority: ${titles[0]} · Normal`,
+        exact: true,
+      })
+      .click();
+    await page.getByRole("button", { name: "High", exact: true }).click();
+    await page.getByTestId("workboard-sort-menu").click();
+    await page
+      .getByRole("radio", { name: "Priority first", exact: true })
+      .click();
+    const order = () =>
+      lane
+        .locator(`[data-testid^="${prefix}"]`)
+        .evaluateAll((nodes) =>
+          nodes.map((node) =>
+            (
+              node as unknown as { getAttribute(key: string): string | null }
+            ).getAttribute("data-testid"),
+          ),
+        );
+    await expect
+      .poll(async () =>
+        (await order()).filter((id) =>
+          ids.some((value) => id === `${prefix}${value}`),
+        ),
+      )
+      .toEqual([`${prefix}${ids[0]}`, `${prefix}${ids[1]}`]);
+    await page.getByTestId("workboard-sort-menu").click();
+    await page
+      .getByRole("radio", { name: "Default order", exact: true })
+      .click();
+    const defaultIds = (await order()).filter((id) =>
+      ids.some((value) => id === `${prefix}${value}`),
+    );
+    expect(defaultIds).toEqual(
+      cardsForStage(
+        before.cards,
+        before.cards.find((card) => card.id === ids[0])!.stage,
+        before.cardOrderByStage,
+      )
+        .filter((card) => ids.includes(card.id))
+        .map((card) => `${prefix}${card.id}`),
+    );
+    expect((await snapshot()).cardOrderByStage).toEqual(
+      before.cardOrderByStage,
+    );
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .last()
+      .click();
+    await page.getByTestId("workboard-edit-priority-high").click();
+    await page
+      .getByTestId("workboard-priority-name")
+      .getByRole("textbox")
+      .fill("Urgent");
+    await page
+      .getByRole("radio", { name: "Color: Violet", exact: true })
+      .click();
+    await page.getByTestId("workboard-save-priority").click();
+    await expect(
+      page.getByTestId("workboard-edit-priority-high"),
+    ).toHaveAttribute("aria-label", "Edit: Urgent");
+    await page.reload();
+    await page.getByTestId("workboard-view-board").click();
+    if (width === 390)
+      await lane.getByRole("radio", { name: /^To do \(/ }).click();
+    await expect(
+      page.getByRole("button", {
+        name: `Priority: ${titles[0]} · Urgent`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .last()
+      .click();
+    await page.getByTestId("workboard-edit-priority-high").click();
+    await page.getByTestId("workboard-reset-priority").click();
+    await page.getByTestId("workboard-save-priority").click();
+    await expect(
+      page.getByTestId("workboard-edit-priority-high"),
+    ).toHaveAttribute("aria-label", "Edit: High");
+    expect(
+      await page.evaluate("document.documentElement.scrollWidth > innerWidth"),
+    ).toBe(false);
+    expect(pageErrors).toEqual([]);
+  });
+}
