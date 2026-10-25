@@ -44,9 +44,14 @@ const expected = [
   "OVERVIEW.zh-CN.md",
   "images/icon.png",
   ...["en", "zh-CN"].flatMap((language) => [
-    ...["workboard", "list", "filters", "settings"].map(
-      (name) => `images/${name}-${language}.png`,
-    ),
+    ...[
+      "workboard",
+      "list",
+      "filters",
+      "settings",
+      "project-priority",
+      "priority-settings",
+    ].map((name) => `images/${name}-${language}.png`),
     ...["views-filter", "move-undo"].map(
       (name) => `images/${name}-${language}.gif`,
     ),
