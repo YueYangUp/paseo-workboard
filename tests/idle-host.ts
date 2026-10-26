@@ -154,7 +154,8 @@ export function idleBoard(options: {
       api as unknown as PaseoApi,
       compat,
       { serverId: "fixture-host", version: "0.12.0" },
-      (id) => board.changed(id),
+      (id, agentsChanged) =>
+        agentsChanged ? board.agentsChanged(id) : board.changed(id),
     );
     // Git and terminal safety are not under test; the fake workspace has no directory.
     host.safety = async () => null;

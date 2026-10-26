@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import {
+  DATA_SCHEMA_VERSION,
   DEFAULT_GROUPS,
   archiveDueAt,
   newTask,
@@ -271,7 +272,7 @@ it("cleans polluted v6 evidence, initializes current fields and permits real obs
     },
     6,
   );
-  expect(migrated.schemaVersion).toBe(10);
+  expect(migrated.schemaVersion).toBe(DATA_SCHEMA_VERSION);
   expect(migrated.settings).toMatchObject({
     archiveAfterDays: 30,
     defaultDraftGroup: null,
@@ -610,7 +611,7 @@ it.each([1, 2, 3, 4, 5, 6, 7])(
       { schemaVersion: version, settings: { defaultStartGroup: "review" } },
       version,
     );
-    expect(result.schemaVersion).toBe(10);
+    expect(result.schemaVersion).toBe(DATA_SCHEMA_VERSION);
     expect(result.settings.defaultStartWorkGroup).toBeNull();
     if (version === 7) expect(result.settings.defaultStartGroup).toBe("review");
   },

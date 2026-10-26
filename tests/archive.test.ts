@@ -60,6 +60,278 @@ it("periodic work strictly crosses 30 days, includes archived Agents, and stops 
     board.dispose();
   }
 });
+it("does not archive a recently emptied workspace using an old task edit", async () => {
+  const test = fixture({
+    settings: settingsSchema.parse({ archiveCanceledEnabled: true }),
+  });
+  test.inventory.workspaces.push(
+    workspace("empty", undefined, ["task:canceled"]),
+  );
+  try {
+    await test.board.start();
+    await test.store.update((data) => {
+      data.tasks[0].updatedAt = "2026-08-01T00:00:00Z";
+    });
+    await test.board.refresh();
+    expect(test.host.archive).not.toHaveBeenCalled();
+    expect(test.board.snapshot().cards[0]).toMatchObject({
+      conversationGateAt: "2026-09-23T00:00:00.000Z",
+      conversationGateEvidence: "upper-bound",
+    });
+  } finally {
+    test.board.dispose();
+  }
+});
+
+const day = 24 * 60 * 60 * 1000;
+function emptyFixture() {
+  const test = fixture({
+    settings: settingsSchema.parse({
+      archiveCanceledEnabled: true,
+      archiveCanceledAfterDays: 1,
+    }),
+  });
+  test.inventory.workspaces.push(
+    workspace("empty", undefined, ["task:canceled"]),
+  );
+  let clock = test.now();
+  const board = new Workboard(test.host, test.store, () => clock);
+  return {
+    ...test,
+    board,
+    advance: (ms: number) => {
+      clock += ms;
+    },
+    clock: () => clock,
+  };
+}
+it("keeps the first empty bound through edits and labels, then archives strictly after the delay", async () => {
+  const test = emptyFixture();
+  try {
+    await test.board.start();
+    const bound = test.board.snapshot().cards[0].conversationGateAt;
+    test.advance(day);
+    test.inventory.workspaces[0].labels.push("unrelated");
+    test.board.changed("empty");
+    await test.store.update((data) => {
+      data.tasks[0].updatedAt = new Date(test.clock()).toISOString();
+      data.tasks[0].description = "Edited";
+    });
+    await test.board.refresh();
+    expect(test.board.snapshot().cards[0].conversationGateAt).toBe(bound);
+    expect(test.host.archive).not.toHaveBeenCalled();
+    test.advance(1);
+    await test.board.refresh();
+    expect(test.host.archive).toHaveBeenCalledExactlyOnceWith("empty");
+  } finally {
+    test.board.dispose();
+  }
+});
+it.each([
+  "agent event",
+  "disconnect",
+  "inventory failure",
+  "nonzero inventory",
+  "restart",
+])("restarts the empty clock after %s", async (change) => {
+  const test = emptyFixture();
+  let board = test.board;
+  try {
+    await board.start();
+    test.advance(day + 1);
+    if (change === "agent event") board.agentsChanged("empty");
+    if (change === "disconnect") board.disconnected();
+    if (change === "inventory failure") {
+      const inventory = test.host.inventory;
+      test.host.inventory = async () => {
+        throw new Error("inventory failed");
+      };
+      await expect(board.refresh()).rejects.toThrow("inventory failed");
+      test.host.inventory = inventory;
+    }
+    if (change === "nonzero inventory") {
+      test.inventory.agents.push({
+        id: "a",
+        workspaceId: "empty",
+        title: null,
+        activity: "idle",
+        updatedAt: new Date(test.clock()).toISOString(),
+        lastUserMessageAt: null,
+      });
+      await board.refresh();
+      test.inventory.agents.length = 0;
+    }
+    if (change === "restart") {
+      board.dispose();
+      board = new Workboard(test.host, test.store, test.clock);
+      await board.start();
+    } else await board.refresh();
+    expect(test.host.archive).not.toHaveBeenCalled();
+    expect(board.snapshot().cards[0].conversationGateAt).toBe(
+      new Date(test.clock()).toISOString(),
+    );
+    test.advance(day + 1);
+    await board.refresh();
+    expect(test.host.archive).toHaveBeenCalledExactlyOnceWith("empty");
+  } finally {
+    board.dispose();
+  }
+});
+it.each([
+  "reconcile",
+  "verify",
+  "safety",
+  "final inventory",
+  "final inventory failure",
+])("rejects empty evidence invalidated during %s", async (phase) => {
+  const test = emptyFixture();
+  try {
+    await test.board.start();
+    test.advance(day + 1);
+    const invalidate = () => test.board.agentsChanged("empty");
+    if (phase === "verify")
+      test.host.recheckAgents = vi.fn(async (agents) => {
+        invalidate();
+        return [...agents];
+      });
+    if (phase === "safety")
+      test.host.safety = async () => {
+        invalidate();
+        return null;
+      };
+    const inventory = test.host.inventory;
+    let reads = 0;
+    test.host.inventory = async () => {
+      const result = await inventory();
+      reads++;
+      if (phase === "final inventory failure" && reads === 3)
+        throw new Error("Inventory lost");
+      if (
+        (phase === "reconcile" && reads === 1) ||
+        (phase === "final inventory" && reads === 3)
+      )
+        invalidate();
+      return result;
+    };
+    await test.board.refresh();
+    expect(test.host.archive).not.toHaveBeenCalled();
+    test.host.inventory = inventory;
+    test.host.safety = async () => null;
+    test.host.recheckAgents = vi.fn(async (agents) => [...agents]);
+    await test.board.refresh();
+    expect(test.host.archive).not.toHaveBeenCalled();
+    expect(test.board.snapshot().cards[0].conversationGateAt).toBe(
+      new Date(test.clock()).toISOString(),
+    );
+  } finally {
+    test.board.dispose();
+  }
+});
+it.each(["recorded child", "unresolved enumeration"])(
+  "retains %s after the last Agent is deleted",
+  async (risk) => {
+    const test = emptyFixture();
+    try {
+      await test.board.start();
+      await test.store.update((data) => {
+        if (risk === "recorded child")
+          data.tasks[0].conversationAgents = [
+            {
+              id: "parent/provider/child",
+              lastObservedAt: "2026-08-01T00:00:00Z",
+              seenWhileLive: true,
+            },
+          ];
+        else data.tasks[0].conversationReason = "child-enumeration-unavailable";
+      });
+      test.advance(100 * day);
+      await test.board.refresh();
+      expect(test.host.archive).not.toHaveBeenCalled();
+      expect(test.board.snapshot().cards[0].conversationGateEvidence).toBe(
+        "unknown",
+      );
+    } finally {
+      test.board.dispose();
+    }
+  },
+);
+
+it("retains unresolved child enumeration when a higher priority timeline error masks its reason", async () => {
+  const test = emptyFixture();
+  const parent = {
+    id: "parent",
+    workspaceId: "empty",
+    title: null,
+    activity: "idle" as const,
+    updatedAt: "2026-09-22T23:00:00Z",
+    lastUserMessageAt: null,
+    childEnumeration: "unavailable" as const,
+  };
+  test.inventory.agents.push(parent);
+  test.host.conversation = async () => {
+    throw new Error("Timeline unreadable");
+  };
+  let board = test.board;
+  try {
+    await board.start();
+    expect(board.snapshot().cards[0]).toMatchObject({
+      conversationGateEvidence: "unknown",
+      conversationReason: "timeline-unreadable",
+      conversationAgents: [],
+    });
+    test.inventory.agents.length = 0;
+    await board.refresh();
+    expect(board.snapshot().cards[0].conversationGateEvidence).toBe("unknown");
+    await board.refresh();
+    expect(board.snapshot().cards[0].conversationGateEvidence).toBe("unknown");
+    board.dispose();
+    board = new Workboard(test.host, new Store(test.backing), test.clock);
+    await board.start();
+    test.advance(100 * day);
+    await board.refresh();
+    expect(board.snapshot().cards[0].conversationGateEvidence).toBe("unknown");
+    expect(test.host.archive).not.toHaveBeenCalled();
+  } finally {
+    board.dispose();
+  }
+});
+
+it("starts an empty waiting period after a bounded timeline failure with complete child enumeration", async () => {
+  const test = emptyFixture();
+  test.inventory.agents.push({
+    id: "parent",
+    workspaceId: "empty",
+    title: null,
+    activity: "idle",
+    updatedAt: "2026-09-22T23:00:00Z",
+    lastUserMessageAt: null,
+    childEnumeration: "complete",
+  });
+  test.host.conversation = async () => {
+    throw new Error("Timeline unreadable");
+  };
+  try {
+    await test.board.start();
+    expect(test.board.snapshot().cards[0]).toMatchObject({
+      conversationGateEvidence: "upper-bound",
+      conversationReason: "timeline-unreadable",
+    });
+    test.inventory.agents.length = 0;
+    await test.board.refresh();
+    expect(test.board.snapshot().cards[0]).toMatchObject({
+      conversationGateAt: new Date(test.clock()).toISOString(),
+      conversationGateEvidence: "upper-bound",
+      conversationReason: null,
+    });
+    expect(test.host.archive).not.toHaveBeenCalled();
+    test.advance(day + 1);
+    await test.board.refresh();
+    expect(test.host.archive).toHaveBeenCalledExactlyOnceWith("empty");
+  } finally {
+    test.board.dispose();
+  }
+});
+
 it("defers no conversation, recent replies, busy agents, unsafe Git and label conflicts", async () => {
   for (const reason of ["none", "recent", "busy", "git", "conflict"]) {
     const { board, host, inventory } = dueFixture();
@@ -437,9 +709,10 @@ it("does not move the archive gate back to an old task timestamp when its last a
     test.inventory.agents.length = 0;
     await test.board.refresh();
     expect(test.host.archive).not.toHaveBeenCalled();
-    expect(test.board.snapshot().cards[0].conversationGateEvidence).toBe(
-      "unknown",
-    );
+    expect(test.board.snapshot().cards[0]).toMatchObject({
+      conversationGateAt: "2026-09-23T00:00:00.000Z",
+      conversationGateEvidence: "upper-bound",
+    });
   } finally {
     test.board.dispose();
   }

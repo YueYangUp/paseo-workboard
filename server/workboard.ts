@@ -107,6 +107,34 @@ const sameOrder = (left: readonly string[], right: readonly string[]) =>
   left.every((value, index) => value === right[index]);
 const hidden = (task: Task) =>
   task.archived?.status === "archived" || task.archived?.status === "external";
+/** Only a lastError-only idle Agent can be superseded by a newer user message. */
+function workspaceActivity(agents: readonly Agent[]): Card["activity"] {
+  const live = agents.filter((agent) => !agent.archivedAt);
+  const healthyTimes = live
+    .filter((agent) => agent.activity !== "error")
+    .map((agent) => Date.parse(agent.lastUserMessageAt ?? ""))
+    .filter(Number.isFinite);
+  const newestHealthy = healthyTimes.length ? Math.max(...healthyTimes) : null;
+  const activities = live
+    .filter((agent) => {
+      if (
+        agent.activity !== "error" ||
+        agent.status !== "idle" ||
+        !agent.lastError ||
+        agent.attentionReason === "error" ||
+        newestHealthy === null
+      )
+        return true;
+      const updated = Date.parse(agent.updatedAt);
+      return !Number.isFinite(updated) || updated >= newestHealthy;
+    })
+    .map((agent) => agent.activity);
+  return (
+    (["waiting", "error", "attention", "running"] as const).find((activity) =>
+      activities.includes(activity),
+    ) ?? "idle"
+  );
+}
 
 function projectChangeRequest(workspace?: Workspace): Card["changeRequest"] {
   const runtime = workspace?.githubRuntime;
@@ -156,6 +184,9 @@ export class Workboard {
    * nothing; it only schedules a recheck and never authorizes an archive.
    */
   private recheckHints = new Map<string, string>();
+  /** First trustworthy empty inventory in this process, never a task edit timestamp. */
+  private emptySince = new Map<string, string>();
+  private emptyRevision = 0;
   private archiveDeferrals = new Map<
     string,
     {
@@ -174,7 +205,7 @@ export class Workboard {
     private now: () => number = Date.now,
     private interval = 60000,
     /** Reported to clients so their due-date arithmetic uses this clock; 0 outside tests. */
-    private clockOffsetMs = 0,
+    private clockOffsetMs: number | (() => number) = 0,
   ) {}
   private serial<T>(run: () => Promise<T>): Promise<T> {
     const work = this.queue.then(() => {
@@ -264,7 +295,42 @@ export class Workboard {
     return `${this.epoch}:${this.workspaceEpochs.get(id) ?? 0}`;
   }
   agentChanged(id: string): void {
-    this.changed(this.inventory.agents.find((a) => a.id === id)?.workspaceId);
+    this.agentsChanged(
+      this.inventory.agents.find((a) => a.id === id)?.workspaceId,
+    );
+  }
+  agentsChanged(workspaceId?: string): void {
+    this.emptyRevision++;
+    if (workspaceId) this.emptySince.delete(workspaceId);
+    else this.emptySince.clear();
+    this.changed(workspaceId);
+  }
+  private async readInventory(): Promise<Inventory> {
+    const revision = this.emptyRevision;
+    try {
+      const inventory = await this.host.inventory();
+      const occupied = new Set(
+        inventory.agents.map((agent) => agent.workspaceId),
+      );
+      const active = new Set(
+        inventory.workspaces.map((workspace) => workspace.id),
+      );
+      for (const id of this.emptySince.keys())
+        if (occupied.has(id) || !active.has(id)) this.emptySince.delete(id);
+      // Events during the read can describe Agents absent from its final rows.
+      if (revision === this.emptyRevision)
+        for (const workspace of inventory.workspaces)
+          if (!occupied.has(workspace.id) && !this.emptySince.has(workspace.id))
+            this.emptySince.set(
+              workspace.id,
+              new Date(this.now()).toISOString(),
+            );
+      return inventory;
+    } catch (error) {
+      this.emptyRevision++;
+      this.emptySince.clear();
+      throw error;
+    }
   }
   changed(workspaceId?: string): void {
     if (workspaceId)
@@ -291,6 +357,8 @@ export class Workboard {
   disconnected(reason = "Paseo disconnected"): void {
     this.epoch++;
     this.connectionGeneration++;
+    this.emptyRevision++;
+    this.emptySince.clear();
     this.connected = false;
     this.error = reason;
   }
@@ -301,7 +369,10 @@ export class Workboard {
       connected: this.connected,
       error: this.error,
       refreshedAt: this.refreshedAt,
-      clockOffsetMs: this.clockOffsetMs,
+      clockOffsetMs:
+        typeof this.clockOffsetMs === "function"
+          ? this.clockOffsetMs()
+          : this.clockOffsetMs,
       settings: data.settings,
       cardOrderByStage: data.cardOrderByStage,
       projects: this.inventory.projects,
@@ -312,13 +383,7 @@ export class Workboard {
         const agents = this.inventory.agents.filter(
           (a) => a.workspaceId === task.workspaceId,
         );
-        const activities = agents
-          .filter((a) => !a.archivedAt)
-          .map((a) => a.activity);
-        const activity: Card["activity"] =
-          (["waiting", "error", "attention", "running"] as const).find((a) =>
-            activities.includes(a),
-          ) ?? "idle";
+        const activity = workspaceActivity(agents);
         const stage = task.workspaceId
           ? workspace
             ? resolveStage(
@@ -369,7 +434,7 @@ export class Workboard {
   }
   private async reconcile(scope?: ReadonlySet<string>): Promise<void> {
     const connection = this.connectionGeneration;
-    const inventory = await this.host.inventory();
+    const inventory = await this.readInventory();
     await this.syncPins(inventory, connection);
     if (this.archiveDeferrals.size) {
       let cleared: string[] = [];
@@ -388,9 +453,21 @@ export class Workboard {
         (task) => task.workspaceId === workspace.id,
       );
       if (scope && !scope.has(workspace.id) && previous) continue;
-      if (previous && this.archiveDeferred(previous, workspace, agents))
+      if (
+        previous &&
+        this.archiveDeferred(previous, workspace, agents) &&
+        !(
+          agents.length === 0 &&
+          this.emptySince.get(workspace.id) !== previous.conversationGateAt
+        )
+      )
         continue;
-      const evidence = await this.observe(agents, previous, this.now());
+      const evidence = await this.observe(
+        agents,
+        previous,
+        this.now(),
+        workspace.id,
+      );
       if (evidence.recheckAt)
         this.recheckHints.set(workspace.id, evidence.recheckAt);
       else this.recheckHints.delete(workspace.id);
@@ -446,6 +523,8 @@ export class Workboard {
       labels: string[];
     }> = [];
     await this.store.update((data) => {
+      const decideExclusivity = data.exclusiveStatusLabelsPending;
+      let hasStatusConflict = false;
       for (const workspace of inventory.workspaces) {
         let task = data.tasks.find((t) => t.workspaceId === workspace.id);
         const imported = !task;
@@ -474,6 +553,7 @@ export class Workboard {
           data.settings.groups,
           data.settings.defaultStartGroup,
         );
+        if (stage === "conflict") hasStatusConflict = true;
         task.lastStage = stage;
         // A clean observation refreshes the newest-wins attribution baseline; a conflict
         // must not, or one failed sync would make every later conflict unattributable.
@@ -488,6 +568,7 @@ export class Workboard {
         if (
           stage === "conflict" &&
           baseline !== null &&
+          !decideExclusivity &&
           data.settings.exclusiveStatusLabels &&
           task.workspaceId &&
           !task.binding
@@ -505,7 +586,21 @@ export class Workboard {
               labels: statusLabels(workspace.labels, data.settings.groups),
             });
         }
-        const observation = observations.get(workspace.id);
+        let observation = observations.get(workspace.id);
+        if (
+          observation?.gate === "upper-bound" &&
+          !inventory.agents.some(
+            (agent) => agent.workspaceId === workspace.id,
+          ) &&
+          this.emptySince.get(workspace.id) !== observation.gateAt
+        )
+          observation = {
+            ...observation,
+            displayAt: null,
+            display: "unknown",
+            gateAt: null,
+            gate: "unknown",
+          };
         if (observation) {
           task.lastConversationAt = observation.displayAt;
           task.conversationDisplayEvidence = observation.display;
@@ -519,6 +614,12 @@ export class Workboard {
           this.observedIssue(task) ??
           this.archiveDeferrals.get(task.id)?.reason ??
           null;
+      }
+      if (decideExclusivity) {
+        if (connection !== this.connectionGeneration)
+          throw new Error(this.error ?? "Paseo disconnected during refresh");
+        data.settings.exclusiveStatusLabels = !hasStatusConflict;
+        data.exclusiveStatusLabelsPending = false;
       }
       for (const task of data.tasks) {
         if (
@@ -600,8 +701,34 @@ export class Workboard {
     agents: readonly Agent[],
     previous: Task | undefined,
     now: number,
+    workspaceId: string,
     options: { recheck?: boolean } = {},
   ): Promise<WorkspaceConversation> {
+    // A single displayed reason can hide another failure, including child enumeration.
+    const unresolvedReason =
+      agents.length === 0 &&
+      previous?.conversationReason &&
+      (previous.conversationGateEvidence === "unknown" ||
+        previous.conversationReason === "child-enumeration-unavailable")
+        ? previous.conversationReason
+        : null;
+    if (
+      agents.length === 0 &&
+      !previous?.conversationAgents.length &&
+      !unresolvedReason
+    ) {
+      const bound = this.emptySince.get(workspaceId);
+      if (bound)
+        return {
+          displayAt: bound,
+          display: "upper-bound",
+          gateAt: bound,
+          gate: "upper-bound",
+          reason: null,
+          agents: [],
+          recheckAt: null,
+        };
+    }
     const readings: Array<{
       agent: Agent;
       conversation: ConversationEvidence;
@@ -630,6 +757,10 @@ export class Workboard {
     let blocked = false;
     // Whether anything besides a deliberately skipped idle parent keeps the gate unknown.
     let hardBlocked = false;
+    if (unresolvedReason) {
+      blocked = true;
+      reasons.add(unresolvedReason);
+    }
     let skipped = false;
     const recordedById = new Map(
       (previous?.conversationAgents ?? []).map((entry) => [entry.id, entry]),
@@ -790,9 +921,15 @@ export class Workboard {
       // The recheck is the one place that loads an idle agent: it lists every idle parent's
       // children and reads the idle histories, and a failed or overtaken listing rejects.
       checked = await this.host.recheckAgents(agents);
-      const evidence = await this.observe(checked, candidate, this.now(), {
-        recheck: true,
-      });
+      const evidence = await this.observe(
+        checked,
+        candidate,
+        this.now(),
+        candidate.workspaceId!,
+        {
+          recheck: true,
+        },
+      );
       // Keep what was learned as display evidence, so a refresh does not make the same
       // candidate read the same history again. It never moves backwards and never gates.
       await this.store.update((data) => {
@@ -973,7 +1110,7 @@ export class Workboard {
     }
     if (removed.length) {
       const epoch = this.epoch;
-      const inventory = await this.host.inventory();
+      const inventory = await this.readInventory();
       if (epoch !== this.epoch || !this.connected)
         throw new Error("Workspaces changed; refresh before deleting a group");
       for (const group of removed) {
@@ -1733,7 +1870,7 @@ export class Workboard {
     const epochs = new Map(
       candidates.map((task) => [task.id, this.observation(task.workspaceId!)]),
     );
-    const inventory = await this.host.inventory();
+    const inventory = await this.readInventory();
     for (const candidate of candidates) {
       if (this.stopped || this.pendingMutations > 0) return;
       const id = candidate.workspaceId!;
@@ -1833,7 +1970,7 @@ export class Workboard {
       // Storage and safety checks can take time. Re-read membership, labels and Agent state before sending.
       let finalIssue: string | null = null;
       try {
-        const fresh = await this.host.inventory();
+        const fresh = await this.readInventory();
         const current = fresh.workspaces.find((w) => w.id === id);
         const currentAgents = fresh.agents.filter((a) => a.workspaceId === id);
         const fingerprint = (items: readonly Agent[]) => agentRows(items);
@@ -1873,7 +2010,7 @@ export class Workboard {
           throw new Error(
             result.error ?? "Native archive returned no timestamp",
           );
-        const active = await this.host.inventory();
+        const active = await this.readInventory();
         this.inventory = active;
         if (active.workspaces.some((w) => w.id === id))
           throw new Error(

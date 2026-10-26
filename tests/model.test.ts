@@ -119,7 +119,11 @@ describe("task stages and conversation-based expiry", () => {
       archiveDoneEnabled: false,
       archiveCanceledEnabled: false,
     });
-    expect(settingsSchema.parse({}).exclusiveStatusLabels).toBe(false);
+    expect(settingsSchema.parse({}).exclusiveStatusLabels).toBe(true);
+    expect(
+      settingsSchema.parse({ exclusiveStatusLabels: false })
+        .exclusiveStatusLabels,
+    ).toBe(false);
     expect(
       settingsSchema.safeParse({
         groups: DEFAULT_GROUPS.map((group) =>
@@ -150,7 +154,7 @@ describe("task stages and conversation-based expiry", () => {
       newestConflictStage("conflict" as never, ["task:todo"], groups),
     ).toBe(undefined);
   });
-  it("enables sidebar In progress pinning for older settings without changing other preferences", () => {
+  it("enables sidebar In progress pinning and defers missing exclusivity for older settings", () => {
     const data = migrateData(
       {
         schemaVersion: 1,
@@ -164,6 +168,7 @@ describe("task stages and conversation-based expiry", () => {
     );
     expect(data.settings).toEqual({
       ...settingsSchema.parse({}),
+      exclusiveStatusLabels: false,
       pinInProgressWorkspaces: true,
       groups: DEFAULT_GROUPS,
       groupOrder: [],

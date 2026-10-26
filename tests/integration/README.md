@@ -40,6 +40,16 @@ used without any message. To run that group against your own marked test home,
 start its daemon with the variable set and export the same variable for
 `npm run test:integration`; never set it on a personal daemon.
 
+The runner also sets `WORKBOARD_TEST_CLOCK_FILE=1` for the offset run. In this
+mode, the same marked temporary home can hold `.workboard-clock-offset-ms`,
+containing a nonnegative integer offset in milliseconds. The clock accepts only
+forward changes; missing, invalid or decreasing values keep the last accepted
+offset. Both the server clock and snapshot offset use the current value. This
+lets the suite observe zero Agents, create and delete a real Agent, and prove
+that automatic archive waits for the new empty period without restarting the
+plugin or editing its stored evidence. Outside this explicit test mode no clock
+file is read.
+
 To also exercise the actual Paseo Web UI in headless Chromium:
 
 ```sh

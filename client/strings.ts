@@ -210,8 +210,7 @@ const zh = {
   archiveCandidateExact: "最后一次已验证对话：{date}",
   archiveCandidateScheduled:
     "记录的活动时间已到复核时间；最后一次对话时间尚未验证。",
-  archiveCandidateUpperBound:
-    "最后对话不晚于：{date}（以已记录活动时间保守计算）",
+  archiveCandidateUpperBound: "最后对话不晚于：{date}（保守上界）",
   enableAutoArchive: "保存自动归档设置",
   enableAutoArchiveConfirm:
     "按新设置有 {count} 个任务已到期（已废弃 {canceled} 个，已完成 {done} 个）。保存后会在安全检查通过时自动归档对应 workspace，可能停止 Agent 和 terminal，并移除托管 worktree。",
@@ -671,7 +670,7 @@ const en: typeof zh = {
   archiveCandidateScheduled:
     "Recorded activity is due for recheck; the last conversation time has not been verified.",
   archiveCandidateUpperBound:
-    "Last conversation no later than: {date} (conservative recorded-activity bound)",
+    "Last conversation no later than: {date} (conservative upper bound)",
   enableAutoArchive: "Save automatic archive settings",
   enableAutoArchiveConfirm:
     "{count} task(s) are due under the new settings ({canceled} Canceled, {done} Done). Saving will archive their workspaces after safety checks, which may stop agents and terminals and remove managed worktrees.",

@@ -5,6 +5,8 @@ import path from "node:path";
 /** Names the integration marker that `tests/integration/README.md` writes into a temporary home. */
 const MARKER_NAME = ".paseo-workboard-integration";
 const MARKER_VALUE = "paseo-workboard-integration-v1";
+export const CLOCK_FILE_ENV = "WORKBOARD_TEST_CLOCK_FILE";
+export const CLOCK_FILE_NAME = ".workboard-clock-offset-ms";
 export const CLOCK_OFFSET_ENV = "WORKBOARD_TEST_CLOCK_OFFSET_MS";
 
 /** The home must be a disposable one: inside the system temporary directory. */
@@ -53,6 +55,24 @@ export function workboardClock(
   } catch {
     return realClock;
   }
-  const offsetMs = Number(raw);
-  return { now: () => real() + offsetMs, offsetMs };
+  let offsetMs = Number(raw);
+  const offset = () => {
+    if (env[CLOCK_FILE_ENV] === "1") {
+      try {
+        const value = readMarker(paths.join(home, CLOCK_FILE_NAME)).trim();
+        // Retain the last valid offset on partial writes, deletion or backward steps.
+        if (/^\d{1,13}$/.test(value))
+          offsetMs = Math.max(offsetMs, Number(value));
+      } catch {
+        /* An absent file keeps the last valid clock. */
+      }
+    }
+    return offsetMs;
+  };
+  return {
+    now: () => real() + offset(),
+    get offsetMs() {
+      return offset();
+    },
+  };
 }

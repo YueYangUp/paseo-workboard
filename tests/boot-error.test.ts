@@ -162,7 +162,7 @@ it("retries a transient read failure after ten seconds and recovers", async () =
   }
 });
 
-it("registers the same current schema and migration that upgrade stored v6 data", async () => {
+it("registers the current schema and migration that upgrade stored v6 data", async () => {
   const test = startup(async () => ({
     status: "ready",
     revision: "r",

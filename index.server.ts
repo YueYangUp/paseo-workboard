@@ -83,11 +83,17 @@ export default function contribute(server: PluginServerContext) {
       if (disposed) return;
       const identity = await compat.identity();
       board?.dispose();
-      const host = new PaseoHost(api, compat, identity, (id) =>
-        board?.changed(id),
+      const host = new PaseoHost(api, compat, identity, (id, agentsChanged) =>
+        agentsChanged ? board?.agentsChanged(id) : board?.changed(id),
       );
       const clock = workboardClock();
-      board = new Workboard(host, store, clock.now, undefined, clock.offsetMs);
+      board = new Workboard(
+        host,
+        store,
+        clock.now,
+        undefined,
+        () => clock.offsetMs,
+      );
       await board.start();
     } catch (failure) {
       const classified = classifyBootFailure(failure);

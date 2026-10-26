@@ -1392,3 +1392,161 @@ describe.runIf(offsetRun)(
     });
   },
 );
+
+describe.runIf(offsetRun && process.env.WORKBOARD_TEST_CLOCK_FILE === "1")(
+  "isolated empty-workspace clock",
+  () => {
+    test("real Agent create/delete resets the waiting period before automatic archive", async () => {
+      const day = 86400000;
+      const initialOffset = Number(process.env.WORKBOARD_TEST_CLOCK_OFFSET_MS);
+      const advance = async (elapsed: number) => {
+        await writeFile(
+          path.join(home, ".workboard-clock-offset-ms"),
+          String(initialOffset + elapsed),
+        );
+        await eventually(
+          snapshot,
+          (board) => board.clockOffsetMs === initialOffset + elapsed,
+          "clock offset did not reach the snapshot",
+        );
+      };
+      await updateSettings({
+        archiveDoneEnabled: false,
+        archiveCanceledEnabled: false,
+        archiveDoneAfterDays: 1,
+      });
+      const directory = path.join(
+        home,
+        "integration-empty",
+        String(Date.now()),
+      );
+      await mkdir(directory, { recursive: true });
+      const created = await client.createWorkspace({
+        source: { kind: "directory", path: directory },
+        title: "integration empty waiting period",
+      });
+      const workspaceId = created.workspace!.id;
+      await client.setWorkspaceLabel({
+        workspaceId,
+        label: { name: "task:done", color: "emerald" },
+        assigned: true,
+      });
+      const cardOf = (board: Board) =>
+        board.cards.find((card) => card.workspaceId === workspaceId);
+      const first = await eventually(
+        snapshot,
+        (board) => cardOf(board)?.conversationGateEvidence === "upper-bound",
+        "first empty observation was not recorded",
+      );
+      const firstBound = cardOf(first)!.conversationGateAt!;
+      const witnessDirectory = path.join(
+        home,
+        "integration-empty-witness",
+        String(Date.now()),
+      );
+      await mkdir(witnessDirectory, { recursive: true });
+      const witness = await client.createWorkspace({
+        source: { kind: "directory", path: witnessDirectory },
+        title: "integration due witness",
+      });
+      const witnessId = witness.workspace!.id;
+      await client.setWorkspaceLabel({
+        workspaceId: witnessId,
+        label: { name: "task:done", color: "emerald" },
+        assigned: true,
+      });
+      const withWitness = await eventually(
+        snapshot,
+        (board) =>
+          board.cards.some(
+            (card) =>
+              card.workspaceId === witnessId &&
+              card.conversationGateEvidence === "upper-bound",
+          ),
+        "empty witness was not observed",
+      );
+      // scan visits stored tasks in this order; the target precedes the due witness.
+      expect(
+        withWitness.cards.findIndex((card) => card.workspaceId === workspaceId),
+      ).toBeLessThan(
+        withWitness.cards.findIndex((card) => card.workspaceId === witnessId),
+      );
+      await advance(day / 2);
+      const agent = await client.createAgent({
+        provider: fixtureId,
+        model: "fixture-model",
+        cwd: directory,
+        workspaceId,
+      });
+      await client.sendAgentMessage(agent.id, "fixture hold turn");
+      await eventually(
+        snapshot,
+        (board) => {
+          const card = cardOf(board);
+          return (
+            card !== undefined &&
+            card.agents.some(
+              (item) => item.id === agent.id && item.activity === "running",
+            ) &&
+            (card.conversationGateEvidence === "upper-bound" ||
+              card.conversationGateEvidence === "exact")
+          );
+        },
+        "live fixture did not establish complete bounded evidence before deletion",
+      );
+      await client.deleteAgent(agent.id);
+      const reset = await eventually(
+        snapshot,
+        (board) => {
+          const card = cardOf(board);
+          return (
+            card?.agents.length === 0 &&
+            card.conversationGateEvidence === "upper-bound" &&
+            Date.parse(card.conversationGateAt!) > Date.parse(firstBound)
+          );
+        },
+        "real create/delete did not restart the empty waiting period",
+      );
+      const resetBound = cardOf(reset)!.conversationGateAt!;
+      // The old bound is due; the post-deletion bound still has half a day left.
+      await advance(day + 60000);
+      const enabled = await updateSettings({ archiveDoneEnabled: true });
+      const checked = await eventually(
+        snapshot,
+        (board) =>
+          board.cards.some(
+            (card) =>
+              card.workspaceId === witnessId &&
+              card.archived?.status === "archived",
+          ),
+        "due witness did not complete the automatic scan",
+      );
+      expect(cardOf(checked)?.archived).toBeNull();
+      expect(cardOf(checked)?.conversationGateAt).toBe(resetBound);
+      expect(
+        (await client.fetchWorkspaces()).entries.some(
+          (item) => item.id === workspaceId,
+        ),
+      ).toBe(true);
+      expect(
+        Date.now() + enabled.clockOffsetMs! - Date.parse(firstBound),
+      ).toBeGreaterThan(day);
+      expect(
+        Date.now() + enabled.clockOffsetMs! - Date.parse(resetBound),
+      ).toBeLessThan(day);
+      await advance(2 * day);
+      // A real workspace event triggers Workboard's normal refresh and archive scan.
+      await client.setWorkspaceLabel({
+        workspaceId,
+        label: { name: "integration-clock-advanced", color: "blue" },
+        assigned: true,
+      });
+      const archived = await eventually(
+        snapshot,
+        (board) => cardOf(board)?.archived?.status === "archived",
+        "empty workspace was not automatically archived after its new delay",
+      );
+      expect(cardOf(archived)?.conversationGateAt).toBe(resetBound);
+    });
+  },
+);

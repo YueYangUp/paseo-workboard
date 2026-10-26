@@ -165,7 +165,7 @@ const preferences = {
   defaultStartGroup: stageSchema.nullable().default(null),
   defaultStartWorkGroup: stageSchema.nullable().default(null),
   pinInProgressWorkspaces: z.boolean().default(true),
-  exclusiveStatusLabels: z.boolean().default(false),
+  exclusiveStatusLabels: z.boolean().default(true),
 };
 export const settingsSchema = z.object({
   ...preferences,
@@ -464,6 +464,7 @@ export const dataSchema = z
   .object({
     schemaVersion: z.literal(DATA_SCHEMA_VERSION).default(DATA_SCHEMA_VERSION),
     revision: z.number().int().nonnegative().default(0),
+    exclusiveStatusLabelsPending: z.boolean().default(false),
     serverId: z.string().nullable().default(null),
     settings: settingsSchema.default(() => settingsSchema.parse({})),
     // Timestamp owns a native pin; null respects manual intervention for this stage.

@@ -1,7 +1,12 @@
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { CLOCK_OFFSET_ENV, workboardClock } from "../server/test-clock";
+import {
+  CLOCK_OFFSET_ENV,
+  CLOCK_FILE_ENV,
+  CLOCK_FILE_NAME,
+  workboardClock,
+} from "../server/test-clock";
 
 const MARKER = "paseo-workboard-integration-v1\n";
 const MARKER_NAME = ".paseo-workboard-integration";
@@ -120,4 +125,45 @@ it("holds under Windows path semantics", () => {
       win,
     ).now(),
   ).toBe(1_000);
+});
+
+it("advances an explicitly enabled temporary clock and reports the same offset", () => {
+  let content = "6000";
+  const clock = workboardClock(
+    env({ ...offset, [CLOCK_FILE_ENV]: "1" }),
+    (file) => {
+      if (file === path.join(HOME, MARKER_NAME)) return MARKER;
+      expect(file).toBe(path.join(HOME, CLOCK_FILE_NAME));
+      if (content === "missing") throw new Error("ENOENT");
+      return content;
+    },
+    now,
+    temporary,
+  );
+  expect(clock.now()).toBe(7000);
+  expect(clock.offsetMs).toBe(6000);
+  content = "9000";
+  expect(clock.offsetMs).toBe(9000);
+  expect(clock.now()).toBe(10000);
+  for (const invalid of ["", "partial", "-1", "1.5", "8000", "missing"]) {
+    content = invalid;
+    expect(clock.now()).toBe(10000);
+    expect(clock.offsetMs).toBe(9000);
+  }
+});
+it("never reads a clock file without the explicit flag and existing clock guards", () => {
+  for (const [extra, marker, isTemporary] of [
+    [offset, MARKER, true],
+    [{ ...offset, [CLOCK_FILE_ENV]: "1" }, "wrong", true],
+    [{ ...offset, [CLOCK_FILE_ENV]: "1" }, MARKER, false],
+    [{ [CLOCK_FILE_ENV]: "1" }, MARKER, true],
+  ] as const) {
+    const clock = workboardClock(
+      env(extra),
+      read(marker),
+      now,
+      () => isTemporary,
+    );
+    expect(clock.now()).toBe(CLOCK_FILE_ENV in extra ? 1000 : 6000);
+  }
 });

@@ -1,6 +1,6 @@
 {
   "name": "paseo-workboard",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "description": "Workspace tasks and draft ideas in a label-linked board or list for Paseo",
   "license": "MIT",
   "author": "fxbing",

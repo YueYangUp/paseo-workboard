@@ -196,12 +196,14 @@ export default function contribute(server: PluginServerContext) {
                 text: "fixture assistant",
               },
             });
-            emit({
-              type: "session.turn",
-              sessionId: input.sessionId,
-              turnId,
-              state: "completed",
-            });
+            // A held turn lets integration tests observe complete live child enumeration.
+            if (promptText(input) !== "fixture hold turn")
+              emit({
+                type: "session.turn",
+                sessionId: input.sessionId,
+                turnId,
+                state: "completed",
+              });
           } else if (input.type === "session.close") {
             emit({ type: "session.closed", sessionId: input.sessionId });
           } else if ("requestId" in input)

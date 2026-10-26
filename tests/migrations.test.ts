@@ -95,6 +95,7 @@ it.each(["zh", "en"])(
     expect(migrated).toEqual({
       ...previous,
       schemaVersion: DATA_SCHEMA_VERSION,
+      exclusiveStatusLabelsPending: false,
       settings: settingsSchema.parse(settings),
       cardOrderByStage: {},
     });
@@ -471,7 +472,7 @@ it("adds a noncolliding canceled group for valid legacy settings that removed al
   }
 });
 
-it("runs the complete v1 to the current schema chain with new settings and empty merge records", () => {
+it("runs the complete v1 to current schema chain with new settings and empty merge records", () => {
   const result = migrateData(
     {
       schemaVersion: 1,
@@ -495,7 +496,8 @@ it("runs the complete v1 to the current schema chain with new settings and empty
 
 it("upgrades priority metadata without changing tasks, order, archive rules or pin ownership", () => {
   const previous = {
-    schemaVersion: 9,
+    schemaVersion: 10,
+    exclusiveStatusLabelsPending: true,
     revision: 12,
     serverId: "fixture-host",
     settings: settingsSchema.parse({
@@ -506,18 +508,33 @@ it("upgrades priority metadata without changing tasks, order, archive rules or p
     cardOrderByStage: { todo: ["draft"] },
     autoPins: { "workspace-1": "2026-09-23T00:00:00Z" },
   };
-  const migrated = migrateData(previous, 9);
+  const migrated = migrateData(previous, 10);
   expect(migrated).toEqual({ ...previous, schemaVersion: DATA_SCHEMA_VERSION });
   expect(migrated.tasks[0].priority).toBeUndefined();
   expect(migrateData(migrated, DATA_SCHEMA_VERSION)).toEqual(migrated);
 });
 
-it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
   "migrates every supported storage version %s to the priority-aware schema",
   (version) => {
     const migrated = migrateData({ schemaVersion: version }, version);
     expect(migrated.schemaVersion).toBe(DATA_SCHEMA_VERSION);
     expect(migrateData(migrated, DATA_SCHEMA_VERSION)).toEqual(migrated);
     expect(migrated.settings.priorityStyles).toBeUndefined();
+  },
+);
+
+it.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
+  "defers a missing exclusivity preference from schema %s without overriding saved choices",
+  (schemaVersion) => {
+    for (const choice of [undefined, false, true]) {
+      const migrated = migrateData(
+        { schemaVersion, settings: { exclusiveStatusLabels: choice } },
+        schemaVersion,
+      );
+      expect(migrated.exclusiveStatusLabelsPending).toBe(choice === undefined);
+      expect(migrated.settings.exclusiveStatusLabels).toBe(choice ?? false);
+      expect(migrateData(migrated, DATA_SCHEMA_VERSION)).toEqual(migrated);
+    }
   },
 );

@@ -142,7 +142,7 @@ it("keeps directory and subagent subscriptions across inventories, overlays off-
 function providerHost(
   parent: Record<string, unknown> | Record<string, unknown>[],
   compat: PaseoCompat,
-  changed = vi.fn(),
+  changed: (workspaceId?: string, agentsChanged?: boolean) => void = vi.fn(),
   observers: SubscriptionObserver<unknown>[] = [],
   timeline: TimelineReader = async () => ({
     epoch: "epoch-empty",
@@ -211,6 +211,27 @@ const parentAgent = {
   lastError: null,
   requiresAttention: false,
 };
+
+it.each([
+  { status: "error", attentionReason: null },
+  { status: "idle", attentionReason: "error" },
+  { status: "idle", attentionReason: null },
+])("preserves the native error source in the inventory: %j", async (source) => {
+  const host = providerHost(
+    { ...parentAgent, ...source, lastError: "Previous turn failed" },
+    { subagents: async () => [] } as unknown as PaseoCompat,
+  );
+  try {
+    const inventory = await host.inventory();
+    expect(inventory.agents[0]).toMatchObject({
+      ...source,
+      activity: "error",
+      lastError: "Previous turn failed",
+    });
+  } finally {
+    host.dispose();
+  }
+});
 
 function invalidateChildListing(
   observers: SubscriptionObserver<unknown>[],
@@ -554,9 +575,9 @@ it("keeps an agent removal scoped to its last known workspace", async () => {
         payload: { kind: "remove", agentId },
       } as Parameters<SubscriptionObserver<unknown>["update"]>[0]);
     remove("parent");
-    expect(changed).toHaveBeenLastCalledWith("w1");
+    expect(changed).toHaveBeenLastCalledWith("w1", true);
     remove("unknown");
-    expect(changed).toHaveBeenLastCalledWith(undefined);
+    expect(changed).toHaveBeenLastCalledWith(undefined, true);
   } finally {
     host.dispose();
   }
@@ -1053,5 +1074,196 @@ it("never labels a lower bound exact when the recorded user message is missing",
     });
   } finally {
     host.dispose();
+  }
+});
+
+it("reports Agent create-delete between inventories, provider events and subscription loss separately from workspace edits", async () => {
+  const changed = vi.fn();
+  const observers: SubscriptionObserver<unknown>[] = [];
+  const host = providerHost(
+    [],
+    { subagents: async () => [] } as unknown as PaseoCompat,
+    changed,
+    observers,
+  );
+  try {
+    await host.inventory();
+    const update = (index: number, message: unknown) =>
+      observers[index].update(
+        message as Parameters<SubscriptionObserver<unknown>["update"]>[0],
+      );
+    update(0, {
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: workspace("w1", "Edited", ["task:done"]),
+      },
+    });
+    expect(changed).toHaveBeenLastCalledWith("w1");
+    update(1, {
+      type: "agent_update",
+      payload: { kind: "upsert", agent: parentAgent },
+    });
+    expect(changed).toHaveBeenLastCalledWith("w1", true);
+    update(2, {
+      type: "agent.provider_subagents.update",
+      payload: { kind: "remove", parentAgentId: "parent", subagentId: "child" },
+    });
+    expect(changed).toHaveBeenLastCalledWith("w1", true);
+    update(1, {
+      type: "agent_update",
+      payload: { kind: "remove", agentId: "parent" },
+    });
+    expect(changed).toHaveBeenLastCalledWith("w1", true);
+    expect((await host.inventory()).agents).toEqual([]);
+    for (const observer of observers) {
+      observer.snapshot({});
+      expect(changed).toHaveBeenLastCalledWith(undefined, true);
+      observer.error!(new Error("Lost subscription"));
+      expect(changed).toHaveBeenLastCalledWith(undefined, true);
+    }
+  } finally {
+    host.dispose();
+  }
+});
+
+it.each(["create-delete", "provider", "snapshot", "subscription failure"])(
+  "resets Workboard's empty bound through the Host callback after %s between polls",
+  async (event) => {
+    const test = fixture({
+      settings: settingsSchema.parse({
+        archiveCanceledEnabled: true,
+        archiveCanceledAfterDays: 1,
+      }),
+    });
+    test.inventory.workspaces.push(
+      workspace("w1", undefined, ["task:canceled"]),
+    );
+    const observers: SubscriptionObserver<unknown>[] = [];
+    let clock = test.now();
+    let board: Workboard;
+    const native = providerHost(
+      [],
+      { subagents: async () => [] } as unknown as PaseoCompat,
+      (id?: string, agentsChanged?: boolean) =>
+        agentsChanged ? board.agentsChanged(id) : board.changed(id),
+      observers,
+      undefined,
+      () => test.inventory.workspaces,
+    );
+    const host = { ...test.host, inventory: () => native.inventory() };
+    board = new Workboard(host, test.store, () => clock);
+    try {
+      await board.start();
+      clock += 24 * 60 * 60 * 1000 + 1;
+      const update = (index: number, message: unknown) =>
+        observers[index].update(
+          message as Parameters<SubscriptionObserver<unknown>["update"]>[0],
+        );
+      if (event === "create-delete") {
+        update(1, {
+          type: "agent_update",
+          payload: { kind: "upsert", agent: parentAgent },
+        });
+        update(1, {
+          type: "agent_update",
+          payload: { kind: "remove", agentId: "parent" },
+        });
+      } else if (event === "provider")
+        invalidateChildListing(observers, "upsert");
+      else if (event === "snapshot") observers[0].snapshot({});
+      else observers[1].error!(new Error("Subscription lost"));
+      await board.refresh();
+      expect(test.host.archive).not.toHaveBeenCalled();
+      expect(board.snapshot().cards[0].conversationGateAt).toBe(
+        new Date(clock).toISOString(),
+      );
+      clock += 24 * 60 * 60 * 1000 + 1;
+      await board.refresh();
+      expect(test.host.archive).toHaveBeenCalledExactlyOnceWith("w1");
+    } finally {
+      board.dispose();
+      native.dispose();
+    }
+  },
+);
+
+it("invalidates both workspaces when an Agent moves and scopes its removal to the destination", async () => {
+  const test = fixture({
+    settings: settingsSchema.parse({
+      archiveCanceledEnabled: true,
+      archiveCanceledAfterDays: 1,
+    }),
+  });
+  test.inventory.workspaces.push(
+    workspace("w1", undefined, ["task:canceled"]),
+    workspace("w2", undefined, ["task:canceled"]),
+    workspace("other", undefined, ["task:canceled"]),
+  );
+  const observers: SubscriptionObserver<unknown>[] = [];
+  let clock = test.now();
+  let board: Workboard;
+  const nativeAgents: Record<string, unknown>[] = [];
+  const native = providerHost(
+    nativeAgents,
+    { subagents: async () => [] } as unknown as PaseoCompat,
+    (id, agentsChanged) =>
+      agentsChanged ? board.agentsChanged(id) : board.changed(id),
+    observers,
+    undefined,
+    () => test.inventory.workspaces,
+  );
+  board = new Workboard(
+    { ...test.host, inventory: () => native.inventory() },
+    test.store,
+    () => clock,
+  );
+  const update = (payload: unknown) =>
+    observers[1].update({ type: "agent_update", payload } as Parameters<
+      SubscriptionObserver<unknown>["update"]
+    >[0]);
+  const bound = (id: string) =>
+    board.snapshot().cards.find((card) => card.workspaceId === id)!
+      .conversationGateAt;
+  try {
+    await board.start();
+    clock += 1000;
+    nativeAgents.push(parentAgent);
+    update({ kind: "upsert", agent: parentAgent });
+    await vi.waitFor(() =>
+      expect(
+        board.snapshot().cards.find((card) => card.workspaceId === "w1")
+          ?.agents,
+      ).toHaveLength(1),
+    );
+    clock += 1000;
+    nativeAgents[0] = { ...parentAgent, workspaceId: "w2" };
+    update({ kind: "upsert", agent: nativeAgents[0] });
+    const departedAt = new Date(clock).toISOString();
+    await vi.waitFor(() => {
+      expect(bound("w1")).toBe(departedAt);
+      expect(bound("w2")).not.toBe(new Date(test.now()).toISOString());
+    });
+    clock += 1000;
+    nativeAgents.length = 0;
+    update({ kind: "remove", agentId: parentAgent.id });
+    await vi.waitFor(() =>
+      expect(bound("w2")).toBe(new Date(clock).toISOString()),
+    );
+    expect(bound("w1")).toBe(departedAt);
+    expect(bound("w2")).toBe(new Date(clock).toISOString());
+    expect(bound("other")).toBe(new Date(test.now()).toISOString());
+    clock = Date.parse(departedAt) + 86400001;
+    await board.refresh();
+    expect(vi.mocked(test.host.archive).mock.calls.map(([id]) => id)).toEqual(
+      expect.arrayContaining(["w1", "other"]),
+    );
+    expect(test.host.archive).not.toHaveBeenCalledWith("w2");
+    clock += 1000;
+    await board.refresh();
+    expect(test.host.archive).toHaveBeenCalledWith("w2");
+  } finally {
+    board.dispose();
+    native.dispose();
   }
 });

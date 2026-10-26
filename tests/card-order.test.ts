@@ -1,5 +1,10 @@
 import { expect, it, vi } from "vitest";
-import { dataSchema, newTask, type Card } from "../shared/model";
+import {
+  DATA_SCHEMA_VERSION,
+  dataSchema,
+  newTask,
+  type Card,
+} from "../shared/model";
 import { cardsForStage } from "../client/board-utils";
 import { mutationSchema } from "../shared/rpc";
 import { migrateData } from "../shared/migrations";
@@ -247,7 +252,7 @@ it.each([1, 2, 3, 4, 5, 6, 7])(
   "F08 migrates v%s to the current schema with empty top-level ordering",
   (version) => {
     const result = migrateData({ schemaVersion: version }, version);
-    expect(result.schemaVersion).toBe(10);
+    expect(result.schemaVersion).toBe(DATA_SCHEMA_VERSION);
     expect(result.cardOrderByStage).toEqual({});
     expect(dataSchema.parse(result)).toEqual(result);
   },

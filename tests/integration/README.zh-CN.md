@@ -18,6 +18,8 @@ runner 会打包当前 checkout，将解包后的 tarball（不含开发依赖�
 
 因此 runner 随后会以 `WORKBOARD_TEST_CLOCK_OFFSET_MS`（40 天）重启 daemon，再运行一遍套件（此模式只运行端到端归档组），带 `--ui` 时再运行浏览器测试。偏移只影响 Workboard 自己的时钟，使空闲 fixture 被视为旧对话；它只在 Paseo home 是带 `.paseo-workboard-integration` 标记的临时目录时生效，否则静默使用真实时钟。要在自己带标记的测试 home 里运行该组，请用该变量启动 daemon，并为 `npm run test:integration` 导出同一变量；不要对个人 daemon 设置它。
 
+runner 在偏移运行中还设置 `WORKBOARD_TEST_CLOCK_FILE=1`。此模式可在同一个带标记的临时 home 内写入固定文件 `.workboard-clock-offset-ms`，内容为非负整数毫秒偏移。时钟只接受向前的变化；文件缺失、内容无效或偏移减小时保留上次有效值。服务端时钟和快照偏移使用同一当前值。因此套件可以先观察零 Agent，再创建并删除真实 Agent，验证自动归档等待新的空观测期限，无需重启插件或修改持久化证据。未显式启用该测试模式时，不读取时钟文件。
+
 同时使用无头 Chromium 操作真实 Paseo Web UI：
 
 ```sh
