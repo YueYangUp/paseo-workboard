@@ -3,6 +3,7 @@ import {
   type Card,
   type CardOrderByStage,
   type Group,
+  type Board,
 } from "../shared/model";
 
 export function sortPriorityCards(cards: readonly Card[]): Card[] {
@@ -25,18 +26,15 @@ export function taskSections(input: {
   fullCards: Card[];
   groups: Group[];
   cardOrderByStage: CardOrderByStage;
-  groupBy: "project" | "status";
-  priorityFirst: boolean;
+  projects: Board["projects"];
   unassigned: string;
-  stageTitle(stage: string): string;
 }): TaskSection[] {
   const sections = new Map<string, TaskSection>();
   const key = (card: Card) =>
-    input.groupBy === "project"
-      ? card.projectId === null
-        ? "project:none"
-        : `project:id:${card.projectId}`
-      : card.stage;
+    card.projectId === null ? "project:none" : `project:id:${card.projectId}`;
+  const projectNames = new Map(
+    input.projects.map((project) => [project.id, project.name]),
+  );
   const counts = new Map<string, number>();
   for (const card of input.fullCards) {
     if (
@@ -58,21 +56,19 @@ export function taskSections(input: {
       sections.set(id, {
         id,
         title:
-          input.groupBy === "project"
-            ? card.projectName || input.unassigned
-            : input.stageTitle(card.stage),
+          (card.projectId !== null
+            ? projectNames.get(card.projectId)
+            : undefined) ||
+          card.projectName ||
+          input.unassigned,
         cards: [],
         total: counts.get(id) ?? 0,
       });
     sections.get(id)!.cards.push(card);
   }
   const values = [...sections.values()];
-  if (input.groupBy === "project")
-    values.sort(
-      (a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id),
-    );
-  if (input.priorityFirst)
-    for (const section of values)
-      section.cards = sortPriorityCards(section.cards);
+  values.sort(
+    (a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id),
+  );
   return values;
 }

@@ -71,6 +71,7 @@ type Gesture = {
 };
 export type BoardViewProps = {
   hostId: string;
+  layoutScope?: string;
   priorityFirst?: boolean;
   cards: Card[];
   fullCards: Card[];
@@ -129,6 +130,9 @@ export function BoardView(props: BoardViewProps) {
     renderCard,
   } = props;
   const toast = useToast();
+  const layoutKey = props.layoutScope
+    ? JSON.stringify([props.hostId, props.layoutScope])
+    : props.hostId;
   const viewport = useRef<View>(null);
   const scroller = useRef<NativeScrollView>(null);
   const compactTabs = useRef<Record<string, View | null>>({});
@@ -165,9 +169,9 @@ export function BoardView(props: BoardViewProps) {
   const contentWidth = useRef(0);
   const scrollX = useRef(0);
   const [height, setHeight] = useState(500);
-  const [widths, setWidths] = useState(() => loadColumnWidths(props.hostId));
+  const [widths, setWidths] = useState(() => loadColumnWidths(layoutKey));
   const [collapsed, setCollapsed] = useState(
-    () => new Set(loadCollapsedColumns(props.hostId)),
+    () => new Set(loadCollapsedColumns(layoutKey)),
   );
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
@@ -213,15 +217,14 @@ export function BoardView(props: BoardViewProps) {
     );
     widthsRef.current = next;
     setWidths(next);
-    if (!saveColumnWidths(latest.current.hostId, next))
-      toast.error(t.layoutSaveFailed);
+    if (!saveColumnWidths(layoutKey, next)) toast.error(t.layoutSaveFailed);
   };
   const setColumnCollapsed = (id: string, value: boolean) => {
     setCollapsed((current) => {
       const next = new Set(current);
       if (value) next.add(id);
       else next.delete(id);
-      if (!saveCollapsedColumns(props.hostId, [...next]))
+      if (!saveCollapsedColumns(layoutKey, [...next]))
         toast.error(t.layoutSaveFailed);
       return next;
     });
@@ -253,6 +256,7 @@ export function BoardView(props: BoardViewProps) {
     () => () => {
       if (timer.current) clearTimeout(timer.current);
       cleanup.current();
+      session.current = null;
     },
     [],
   );
@@ -324,8 +328,7 @@ export function BoardView(props: BoardViewProps) {
       void moveCardRelative(card, key === "ArrowUp" ? -1 : 1);
       return true;
     });
-  const tick = () => {
-    timer.current = null;
+  const updateGesture = () => {
     const current = session.current;
     if (!current) return;
     const view = bounds.current;
@@ -397,7 +400,15 @@ export function BoardView(props: BoardViewProps) {
         setInsertion(next[next.indexOf(current.id) + 1] ?? null);
       }
     }
-    if (scrolling) queueTick();
+    queueTick();
+  };
+  const tick = () => {
+    timer.current = null;
+    const current = session.current;
+    if (current)
+      measureViewport(() => {
+        if (session.current === current) updateGesture();
+      });
   };
   const queueTick = () => {
     if (!timer.current) timer.current = setTimeout(tick, 16);
@@ -453,7 +464,7 @@ export function BoardView(props: BoardViewProps) {
     session.current.y = y;
     queueTick();
   };
-  const end = (x: number, y: number) => {
+  const finishDrop = (x: number, y: number) => {
     const current = session.current;
     if (!current) return;
     if (
@@ -525,10 +536,45 @@ export function BoardView(props: BoardViewProps) {
       }
     }
   };
-  const measureViewport = () =>
-    viewport.current?.measureInWindow((left, top, width, measuredHeight) => {
-      bounds.current = { left, top, width, height: measuredHeight };
-    });
+  const end = (x: number, y: number) => {
+    const current = session.current;
+    if (current)
+      measureViewport(() => {
+        if (session.current === current) finishDrop(x, y);
+      });
+  };
+  // Ancestor scrolling changes window coordinates without emitting column onLayout.
+  const measureViewport = (done: () => void = () => {}) => {
+    const measures: Array<(next: () => void) => void> = [];
+    if (viewport.current)
+      measures.push((next) =>
+        viewport.current!.measureInWindow((left, top, width, height) => {
+          bounds.current = { left, top, width, height };
+          next();
+        }),
+      );
+    for (const [id, scroller] of Object.entries(listScrollers.current)) {
+      const view = scroller?.getNativeScrollRef?.();
+      if (view?.measureInWindow)
+        measures.push((next) =>
+          view.measureInWindow(
+            (_left: number, top: number, _width: number, height: number) => {
+              Object.assign(listState(id), { top, height });
+              next();
+            },
+          ),
+        );
+    }
+    let remaining = measures.length;
+    if (!remaining) {
+      done();
+      return;
+    }
+    for (const measure of measures)
+      measure(() => {
+        if (--remaining === 0) done();
+      });
+  };
   const relativeMove = async (id: string, direction: number) => {
     const ids = latest.current.groups.map((group) => group.id);
     const index = ids.indexOf(id);
@@ -1448,14 +1494,20 @@ function BoardColumn({
     measure: measured,
     onBegin: onGroupBegin,
   });
+  const lastPress = useRef(0);
   const resize = useDragHandle({
     ...gesture,
     disabled,
     horizontal: true,
+    captureStart: true,
     measure: measured,
     onBegin: onResizeBegin,
+    onTap: () => {
+      const now = Date.now();
+      if (now - lastPress.current < 350) onWidthKey(0);
+      lastPress.current = now;
+    },
   });
-  const lastPress = useRef(0);
   const [resizeHovered, setResizeHovered] = useState(false);
   const [resizeFocused, setResizeFocused] = useState(false);
   return (
@@ -1601,7 +1653,7 @@ function BoardColumn({
           onScroll={(event) => onListScroll(event.nativeEvent.contentOffset.y)}
           scrollEventThrottle={16}
           onContentSizeChange={(_width, height) => onListContentHeight(height)}
-          style={{ flex: 1 }}
+          style={{ flex: 1, marginRight: 28 }}
           contentContainerStyle={styles.cards}
         >
           {children}
@@ -1643,13 +1695,8 @@ function BoardColumn({
           onPointerLeave={() => setResizeHovered(false)}
           style={[styles.resize, dragCursor(true)]}
         >
-          <Pressable
-            disabled={disabled}
-            onPress={() => {
-              const now = Date.now();
-              if (now - lastPress.current < 350) onWidthKey(0);
-              lastPress.current = now;
-            }}
+          <View
+            pointerEvents="none"
             accessible={false}
             style={{
               flex: 1,
@@ -1669,7 +1716,7 @@ function BoardColumn({
                     : theme.colors.border,
               }}
             />
-          </Pressable>
+          </View>
         </View>
       )}
     </View>
@@ -1746,10 +1793,10 @@ const styles = StyleSheet.create({
   },
   resize: {
     position: "absolute",
-    right: -5,
+    right: 0,
     top: 42,
     bottom: 0,
-    width: 12,
+    width: 36,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 5,

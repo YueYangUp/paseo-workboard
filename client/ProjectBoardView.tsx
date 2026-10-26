@@ -1,12 +1,13 @@
 import { Pressable, Text, View } from "react-native";
 import { Icon, ScrollView } from "@getpaseo/plugin/client/react-native";
 import { BoardView, type BoardViewProps } from "./BoardView";
-import { stageTitle } from "./strings";
+import type { Board } from "../shared/model";
 import { taskSections } from "./project-groups";
 
 /** Each native project is one collapsible lane with the original status columns and drag behavior. */
 export function ProjectBoardView(
   props: BoardViewProps & {
+    projects: Board["projects"];
     onCreateInProject?(projectId: string | null): void;
     collapsed: ReadonlySet<string>;
     onCollapsedChange(ids: string[]): void;
@@ -15,10 +16,7 @@ export function ProjectBoardView(
   const { t, theme, collapsed } = props;
   const sections = taskSections({
     ...props,
-    groupBy: "project",
-    priorityFirst: false,
     unassigned: t.unassigned,
-    stageTitle: (stage) => stageTitle(stage, props.groups, t),
   });
   return (
     <ScrollView
@@ -94,6 +92,7 @@ export function ProjectBoardView(
               >
                 <BoardView
                   {...props}
+                  layoutScope={section.id}
                   cards={section.cards}
                   renderQuickCreate={undefined}
                   onCreateTask={

@@ -55,6 +55,7 @@ export function PriorityBadge({
 export function PriorityPicker({
   title,
   value = "normal",
+  conflicted = false,
   priorityStyles,
   onChange,
   disabled,
@@ -63,6 +64,7 @@ export function PriorityPicker({
 }: {
   title: string;
   value?: Priority;
+  conflicted?: boolean;
   priorityStyles?: PriorityStyles;
   onChange?(priority: Priority): Promise<boolean>;
   disabled: boolean;
@@ -79,7 +81,7 @@ export function PriorityPicker({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${t.priority}: ${title} · ${label}`}
-        disabled={disabled || !onChange}
+        disabled={disabled || saving || !onChange}
         onPress={() => setOpen(true)}
         style={{
           minHeight: 36,
@@ -119,7 +121,7 @@ export function PriorityPicker({
                 accessibilityState={{ selected: priority === value }}
                 disabled={disabled || saving}
                 onPress={async () => {
-                  if (priority === value) {
+                  if (priority === value && !conflicted) {
                     setOpen(false);
                     return;
                   }

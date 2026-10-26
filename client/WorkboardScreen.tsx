@@ -23,6 +23,7 @@ import {
   isDraftGroup,
   isTerminalGroup,
   orderedGroups,
+  priorityLabels,
   type Board,
   type Card,
   type Group,
@@ -962,6 +963,7 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
         />
       )}
       <TaskView
+        projects={board.projects}
         onCreateInProject={
           writesDisabled
             ? undefined
@@ -1170,6 +1172,7 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
                 taskId: card.id,
                 updatedAt: card.updatedAt,
                 priority,
+                expectedLabels: priorityLabels(card.labels),
               }))
             }
             onStart={() => setStarting({ card })}

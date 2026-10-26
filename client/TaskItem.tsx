@@ -6,6 +6,7 @@ import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
 import {
   groupKind,
   isTerminalGroup,
+  priorityLabels,
   type Board,
   type Card,
   type Priority,
@@ -91,6 +92,7 @@ export function TaskItem({
     <PriorityPicker
       title={card.title}
       value={card.priority}
+      conflicted={priorityLabels(card.labels).length > 1}
       priorityStyles={board.settings.priorityStyles}
       onChange={onPriorityChange}
       disabled={
@@ -130,12 +132,20 @@ export function TaskItem({
       : t.conversationReasons[card.conversationReason]
     : null;
   const terminal = isTerminalGroup(card.stage, board.settings.groups);
-  const issue =
+  const issue = [
     card.issue === "no-conversation" || card.issue === "conversation-unknown"
       ? null
-      : issueText(card.issue, t);
+      : issueText(card.issue, t),
+    priorityLabels(card.labels).length > 1
+      ? t.issues["priority-labels-conflict"]
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const normalLabels = card.labels.filter(
-    (label) => !card.managedLabels.includes(label),
+    (label) =>
+      !card.managedLabels.includes(label) &&
+      priorityLabels([label]).length === 0,
   );
   const group = board.settings.groups.find((item) => item.id === card.stage);
   const reasons = attentionReasons(card).map((reason) => {
