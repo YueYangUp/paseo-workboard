@@ -129,12 +129,6 @@ vi.mock("../client/web", async (original) => ({
   loadBoardFilters: () => runtime.filters,
   saveBoardFilters: (...args: any[]) => runtime.saveFilters(...(args as [])),
   duringDrag: () => () => {},
-  loadColumnWidths: () => ({}),
-  saveColumnWidths: () => true,
-}));
-vi.mock("../client/column-preferences", () => ({
-  loadCollapsedColumns: () => [],
-  saveCollapsedColumns: () => true,
 }));
 
 import {
@@ -3144,4 +3138,198 @@ it("priority badges use three distinct theme-aware tones and custom labels in pi
   });
   await byLabel(picker.render(), "急件").props.onPress();
   expect(onChange).toHaveBeenCalledExactlyOnceWith("high");
+});
+
+it("captures a column resize on press, keeps taps for reset and never treats a drag as a tap", () => {
+  const test = columns();
+  const begin = vi.fn();
+  const end = vi.fn();
+  const reset = vi.fn();
+  test.column.props = {
+    ...test.column.props,
+    onResizeBegin: begin,
+    onEnd: end,
+    onWidthKey: reset,
+  };
+  const tree = test.column.render();
+  byID(tree, "workboard-column-inbox").props.ref.current = {
+    measureInWindow: (callback: any) => callback(0, 0, 340, 800),
+  };
+  const handle = byID(tree, "workboard-resize-inbox").props;
+  const press = () => {
+    expect(
+      handle.onStartShouldSetPanResponderCapture({
+        nativeEvent: { pageX: 320, pageY: 100 },
+      }),
+    ).toBe(true);
+    handle.onPanResponderGrant({}, { moveX: 320, moveY: 100, dx: 0, dy: 0 });
+  };
+  const release = () =>
+    handle.onPanResponderRelease({}, { moveX: 320, moveY: 100, dx: 0, dy: 0 });
+  press();
+  release();
+  expect(reset).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(100);
+  press();
+  release();
+  expect(reset).toHaveBeenCalledExactlyOnceWith(0);
+  reset.mockClear();
+  press();
+  expect(begin).not.toHaveBeenCalled();
+  handle.onPanResponderMove({}, { moveX: 400, moveY: 100, dx: 80, dy: 0 });
+  release();
+  expect(begin).toHaveBeenCalledOnce();
+  expect(end).toHaveBeenCalledOnce();
+  expect(reset).not.toHaveBeenCalled();
+  test.column.props = { ...test.column.props, disabled: true };
+  const disabled = byID(test.column.render(), "workboard-resize-inbox").props;
+  expect(
+    disabled.onStartShouldSetPanResponderCapture({
+      nativeEvent: { pageX: 320, pageY: 100 },
+    }),
+  ).toBe(false);
+});
+
+it("refreshes project column coordinates before and during a drag without onLayout", () => {
+  const test = orderScene();
+  let top = 120;
+  const column = find(
+    test.view.render(),
+    (e) =>
+      typeof e.type === "function" &&
+      e.type.name === "BoardColumn" &&
+      e.props.group.id === "todo",
+  );
+  column.props.onListLayout({ top: 120, height: 260 });
+  column.props.onListRef({
+    getNativeScrollRef: () => ({
+      measureInWindow: (cb: any) => cb(0, top, 246, 260),
+    }),
+  });
+  const shell = find(
+    test.view.render(),
+    (e) =>
+      typeof e.type === "function" &&
+      e.type.name === "TaskDragShell" &&
+      e.props.card.id === "a",
+  );
+  shell.props.onBegin({ left: 0, top: 120, width: 246, height: 80 }, 100, 150);
+  shell.props.onMove(100, 240);
+  vi.advanceTimersByTime(16);
+  top = 40;
+  // A release after an ancestor scroll must use current coordinates, even without another pointer move.
+  shell.props.onEnd(100, 180);
+  expect(test.props.onReorderCards).toHaveBeenCalledWith(
+    test.props.cards[0],
+    ["a", "b", "c", "d"],
+    ["b", "c", "a", "d"],
+  );
+});
+
+it("persists project folds and widths independently across interleaved lane edits and remounts", () => {
+  viewStorage();
+  vi.stubGlobal("window", { localStorage });
+  const a = columns(),
+    b = columns();
+  a.props.layoutScope = "project:id:a";
+  b.props.layoutScope = "project:id:b";
+  // Remount to load each project's own layout key.
+  const first = mount(BoardView, a.props),
+    second = mount(BoardView, b.props);
+  const col = (view: any, id: string) =>
+    find(
+      view.render(),
+      (e) =>
+        typeof e.type === "function" &&
+        e.type.name === "BoardColumn" &&
+        e.props.group.id === id,
+    );
+  col(first, "todo").props.onToggleCollapsed();
+  col(first, "todo").props.onWidthKey(1);
+  col(second, "review").props.onToggleCollapsed();
+  col(second, "review").props.onWidthKey(-1);
+  const reloadedA = mount(BoardView, a.props),
+    reloadedB = mount(BoardView, b.props);
+  expect(col(reloadedA, "todo").props.collapsed).toBe(true);
+  expect(col(reloadedA, "review").props.collapsed).toBe(false);
+  expect(col(reloadedB, "review").props.collapsed).toBe(true);
+  col(reloadedA, "todo").props.onToggleCollapsed();
+  col(reloadedB, "review").props.onToggleCollapsed();
+  expect(col(reloadedA, "todo").props.width).toBe(266);
+  expect(col(reloadedB, "review").props.width).toBe(226);
+});
+
+it("keeps a priority picker open after a rejected pending RPC, allows unrelated tasks and retries", async () => {
+  const { PriorityPicker } = await import("../client/PriorityPicker");
+  const pending = deferred<Board>();
+  runtime.mutation.mockReturnValueOnce(pending.promise);
+  const screen = host();
+  const task = (id: string) => {
+    const view = named(screen.render(), "BoardView");
+    return view.props.renderCard(
+      view.props.cards.find((c: Card) => c.id === id),
+    );
+  };
+  const one = runtime.query.data.cards[0].id,
+    two = runtime.query.data.cards[1].id;
+  const item = mount(task(one).type, task(one).props);
+  const pickerElement = () => {
+    item.props = task(one).props;
+    return named(item.render(), "PriorityPicker");
+  };
+  const picker = mount(PriorityPicker, pickerElement().props);
+  byLabel(
+    picker.render(),
+    `${t.priority}: ${task(one).props.card.title} · ${t.priorities.normal}`,
+  ).props.onPress();
+  const write = byLabel(picker.render(), t.priorities.high).props.onPress();
+  expect(task(one).props.pending).toBe(true);
+  expect(task(two).props.pending).toBe(false);
+  picker.props = pickerElement().props;
+  expect(byLabel(picker.render(), t.priorities.high).props.disabled).toBe(true);
+  expect(task(two).props.onPriorityChange).toBeTypeOf("function");
+  pending.reject(new Error("Task changed; refresh before saving"));
+  await write;
+  picker.props = pickerElement().props;
+  expect(find(picker.render(), (e) => e.type === Modal).props.open).toBe(true);
+  expect(
+    byLabel(picker.render(), t.priorities.normal).props.accessibilityState
+      .selected,
+  ).toBe(true);
+  expect(byLabel(picker.render(), t.priorities.high).props.disabled).toBe(
+    false,
+  );
+  expect(runtime.toast.error).toHaveBeenCalled();
+  runtime.mutation.mockResolvedValueOnce({
+    ...runtime.query.data,
+    revision: 2,
+    cards: runtime.query.data.cards.map((c: Card) =>
+      c.id === one ? { ...c, priority: "high" } : c,
+    ),
+  });
+  await byLabel(picker.render(), t.priorities.high).props.onPress();
+  expect(find(picker.render(), (e) => e.type === Modal).props.open).toBe(false);
+  expect(
+    runtime.query.data.cards.find((c: Card) => c.id === one).priority,
+  ).toBe("high");
+});
+
+it("can resolve native priority conflicts by selecting the currently displayed rank without hiding other issues", async () => {
+  const { PriorityPicker } = await import("../client/PriorityPicker");
+  const c = {
+    ...card("conflict"),
+    priority: "high" as const,
+    labels: ["priority:high", "priority:low"],
+    issue: "native-archive-unknown",
+  };
+  const item = taskComponent(c);
+  const control = named(item.render(), "PriorityPicker");
+  expect(control.props.conflicted).toBe(true);
+  expect(text(item.render())).not.toContain("priority:high");
+  expect(text(item.render())).toContain(t.issues["native-archive-unknown"]);
+  expect(text(item.render())).toContain(t.issues["priority-labels-conflict"]);
+  const change = vi.fn().mockResolvedValue(true);
+  const picker = mount(PriorityPicker, { ...control.props, onChange: change });
+  await byLabel(picker.render(), t.priorities.high).props.onPress();
+  expect(change).toHaveBeenCalledExactlyOnceWith("high");
 });
