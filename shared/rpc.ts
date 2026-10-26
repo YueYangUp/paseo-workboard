@@ -23,6 +23,7 @@ export const mutationSchema = z.discriminatedUnion("action", [
     taskId: z.string(),
     updatedAt: z.string(),
     priority: prioritySchema,
+    expectedLabels: z.array(z.string()),
   }),
   z.object({
     action: z.literal("create"),

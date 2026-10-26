@@ -57,6 +57,26 @@ export type GroupColor = (typeof GROUP_COLORS)[number];
 export const PRIORITIES = ["high", "normal", "low"] as const;
 export const prioritySchema = z.enum(PRIORITIES);
 export type Priority = z.infer<typeof prioritySchema>;
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  high: "priority:high",
+  normal: "priority:normal",
+  low: "priority:low",
+};
+export function priorityLabels(labels: readonly string[]): string[] {
+  const managed = new Set(Object.values(PRIORITY_LABELS).map(labelKey));
+  return [
+    ...new Set(labels.filter((name) => managed.has(labelKey(name)))),
+  ].sort();
+}
+export function resolvePriority(labels: readonly string[]): Priority {
+  const present = new Set(labels.map(labelKey));
+  return (
+    PRIORITIES.find((priority) =>
+      present.has(labelKey(PRIORITY_LABELS[priority])),
+    ) ?? "normal"
+  );
+}
+
 export const priorityStyleSchema = z.object({
   name: z.string().trim().min(1).max(24).nullable(),
   color: z.enum(GROUP_COLORS),
@@ -337,7 +357,7 @@ export function conversationStatusFor(
  * The stored settings version. The plugin registers this same value, because the host only
  * migrates stored settings when the registered version differs from what it finds.
  */
-export const DATA_SCHEMA_VERSION = 10;
+export const DATA_SCHEMA_VERSION = 11;
 
 export const sourceSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -437,6 +457,7 @@ export const taskSchema = z.object({
     .array(
       z.object({
         draftId: z.string(),
+        priority: prioritySchema.optional(),
         title: z.string().min(1),
         description: z.string(),
         mergedAt: z.string(),
