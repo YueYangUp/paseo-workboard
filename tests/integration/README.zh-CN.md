@@ -27,7 +27,7 @@ npx playwright install --only-shell chromium
 npm run test:host -- --ui
 ```
 
-Linux 可用 `npx playwright install --with-deps --only-shell chromium` 一并安装所需系统库。CI 会在 `.github/workflows/ci.yml` 中 `host` 矩阵列出的每个 Paseo 版本上执行这套检查。冒烟测试使用虚构任务和确定性的 fixture provider，覆盖视图切换与归档设置交互，遇到未捕获的页面错误会失败。不覆盖所有布局、主题、无障碍、移动客户端或 provider。
+Linux 可用 `npx playwright install --with-deps --only-shell chromium` 一并安装所需系统库。CI 会在 `.github/workflows/ci.yml` 中 `host` 矩阵列出的每个 Paseo 版本上执行这套检查。冒烟测试使用虚构任务和确定性的 fixture provider，覆盖视图切换、归档设置交互、1440px 与 390px 的项目分组和优先级设置，以及项目滚动期间的卡片排序、鼠标调整列宽和刷新后保留布局；遇到未捕获的页面错误会失败。不覆盖所有布局、主题、无障碍、移动客户端或 provider。
 
 日志和失败截图、trace 写入 runner 打印的临时产物目录；可通过 `WORKBOARD_HOST_ARTIFACTS` 指定位置。CI 在失败时上传该目录，单独运行浏览器套件默认使用已忽略的 `test-results/`。
 
