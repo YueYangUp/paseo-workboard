@@ -278,7 +278,11 @@ for (const width of [1440, 390]) {
     });
     before = await snapshot();
     await openWorkboard(page);
+    const workboardRoute = page.url();
     await page.setViewportSize({ width, height: 1000 });
+    // Older hosts remount compact navigation on resize and return to the landing page.
+    // Enter the observed Workboard route after selecting the test viewport.
+    await page.goto(workboardRoute);
     await page.getByTestId("workboard-view-board").click();
     await page.getByTestId("workboard-group-menu").click();
     await page
@@ -377,3 +381,146 @@ for (const width of [1440, 390]) {
     expect(pageErrors).toEqual([]);
   });
 }
+
+test("reorders cards after project scrolling and resizes columns with the pointer", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const stamp = Date.now();
+  const prefix = `Geometry ${stamp}`;
+  const projectIds: string[] = [];
+  for (const name of ["Alpha", "Beta"]) {
+    const directory = path.join(home, `geometry-${name}-${stamp}`);
+    await mkdir(directory, { recursive: true });
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      title: `${name} example workspace`,
+    });
+    await client.reloadPlugin(pluginId);
+    await expect
+      .poll(async () =>
+        (await snapshotIfReady())?.cards.some(
+          (c) => c.workspaceId === created.workspace!.id,
+        ),
+      )
+      .toBe(true);
+    projectIds.push(
+      (await snapshot()).cards.find(
+        (c) => c.workspaceId === created.workspace!.id,
+      )!.projectId!,
+    );
+  }
+  const ids: string[][] = [[], []];
+  for (const [index, projectId] of projectIds.entries()) {
+    for (const letter of ["a", "b", "c", "d"]) {
+      const title = `${prefix} ${index} ${letter}`;
+      const next = (await client.invokePluginRpc(pluginId, "workboard.mutate", {
+        action: "create",
+        title,
+        description: "",
+        projectId,
+      })) as Board;
+      ids[index].push(next.cards.find((c) => c.title === title)!.id);
+    }
+  }
+  const before = await snapshot();
+  const stage = before.cards.find((c) => c.id === ids[1][0])!.stage;
+  const fullOrder = cardsForStage(
+    before.cards,
+    stage,
+    before.cardOrderByStage,
+  ).map((c) => c.id);
+  for (const [index, members] of ids.entries())
+    ids[index] = fullOrder.filter((id) => members.includes(id));
+  const expectedOrder = fullOrder;
+  await client.invokePluginRpc(pluginId, "workboard.mutate", {
+    action: "reorder-cards",
+    taskId: ids[0][0],
+    stage,
+    expectedOrder: fullOrder,
+    cardOrder: expectedOrder,
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openWorkboard(page);
+  await page.getByPlaceholder("Search tasks or projects").fill(prefix);
+  await page.getByTestId("workboard-group-menu").click();
+  await page
+    .getByRole("radio", { name: "Group by project", exact: true })
+    .click();
+  const lane = page.getByTestId(
+    `workboard-project-lane-project:id:${projectIds[1]}`,
+  );
+  await lane.scrollIntoViewIfNeeded();
+  const source = lane.getByTestId(`workboard-drag-${ids[1][0]}`);
+  const target = lane.getByTestId(`workboard-card-${ids[1][2]}`);
+  const start = (await source.boundingBox())!;
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    start.x + start.width / 2,
+    start.y + start.height / 2 + 10,
+    { steps: 3 },
+  );
+  // Scroll the project ancestor during the gesture, without changing column size.
+  await lane.evaluate((node) => {
+    type ScrollNode = {
+      parentElement: ScrollNode | null;
+      scrollHeight: number;
+      clientHeight: number;
+      scrollBy(x: number, y: number): void;
+    };
+    const { getComputedStyle } = globalThis as unknown as {
+      getComputedStyle(node: ScrollNode): { overflowY: string };
+    };
+    let parent = (node as unknown as ScrollNode).parentElement;
+    while (parent) {
+      if (
+        parent.scrollHeight > parent.clientHeight &&
+        /auto|scroll/.test(getComputedStyle(parent).overflowY)
+      ) {
+        parent.scrollBy(0, -60);
+        return;
+      }
+      parent = parent.parentElement;
+    }
+    throw new Error("Project scroll container was not found");
+  });
+  const destination = (await target.boundingBox())!;
+  await page.mouse.move(
+    destination.x + destination.width / 2,
+    destination.y + destination.height - 12,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () =>
+      cardsForStage(
+        (await snapshot()).cards,
+        stage,
+        (await snapshot()).cardOrderByStage,
+      )
+        .filter((c) => ids[1].includes(c.id))
+        .map((c) => c.id),
+    )
+    .toEqual([ids[1][1], ids[1][2], ids[1][0], ids[1][3]]);
+  const column = lane.getByTestId(`workboard-column-${stage}`);
+  const initialWidth = (await column.boundingBox())!.width;
+  const handle = lane.getByTestId(`workboard-resize-${stage}`);
+  const rect = (await handle.boundingBox())!;
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(rect.x + rect.width / 2 + 60, rect.y + 60, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  await expect
+    .poll(async () => Math.round((await column.boundingBox())!.width))
+    .toBe(Math.round(initialWidth + 60));
+  await page.reload();
+  await expect(lane).toBeVisible();
+  await expect
+    .poll(async () => Math.round((await column.boundingBox())!.width))
+    .toBe(Math.round(initialWidth + 60));
+  expect(pageErrors).toEqual([]);
+});
