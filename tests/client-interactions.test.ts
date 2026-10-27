@@ -1865,28 +1865,41 @@ it("F08 uses the real column list geometry and scroll callbacks for vertical edg
   expect(scrollTo.mock.calls[0][0].y).toBeGreaterThan(50);
   shell.props.onEnd(100, 275);
 });
-it("F08 list menu resets with the complete column CAS", async () => {
-  const test = orderScene();
-  const column = find(
-    test.view.render(),
-    (e) =>
-      typeof e.type === "function" &&
-      e.type.name === "BoardColumn" &&
-      e.props.group.id === "todo",
-  );
-  column.props.onMenu();
-  const action = find(
-    test.view.render(),
-    (e) => e.props.label === (t as any).resetCardOrder,
-  );
-  await action.props.onPress();
-  expect(test.props.onResetCardOrder).toHaveBeenCalledWith("todo", [
-    "a",
-    "b",
-    "c",
-    "d",
-  ]);
-});
+it.each(["Board", "List"])(
+  "%s group menu freezes reset during priority sorting and permits it with sorting off",
+  async (mode) => {
+    const test = mode === "Board" ? orderScene() : listScene();
+    test.props.priorityFirst = true;
+    const group = find(
+      test.view.render(),
+      (e) =>
+        typeof e.type === "function" &&
+        e.type.name === (mode === "Board" ? "BoardColumn" : "ListGroup") &&
+        e.props.group.id === "todo",
+    );
+    group.props.onMenu();
+    const resetButton = () => {
+      const action = find(
+        test.view.render(),
+        (e) => e.props.label === t.resetCardOrder,
+      );
+      return mount(
+        action.type as any,
+        action.props,
+      ).render() as ReactElement<any>;
+    };
+    expect(resetButton().props.disabled).toBe(true);
+    expect(test.props.onResetCardOrder).not.toHaveBeenCalled();
+    test.props.priorityFirst = false;
+    const enabled = resetButton();
+    expect(enabled.props.disabled).toBe(false);
+    await enabled.props.onPress();
+    expect(test.props.onResetCardOrder).toHaveBeenCalledExactlyOnceWith(
+      "todo",
+      ["a", "b", "c", "d"],
+    );
+  },
+);
 
 it.each([
   ["working-two", "working-two"],
@@ -2100,6 +2113,7 @@ it("L01 switches layout without changing filtered cards or saved order, and isol
   expect(JSON.parse(storage.get("paseo-workboard:view:alpha")!)).toEqual({
     mode: "list",
     collapsedListGroups: ["todo"],
+    priorityFirst: true,
   });
   expect(named(hostFor("beta").render(), "BoardView")).toBeDefined();
   expect(named(hostFor("alpha").render(), "ListView")).toBeDefined();
@@ -3244,8 +3258,8 @@ it("project lanes retain full native order for mutations while scoping displayed
 it("priority sorting stays inside status columns and never overwrites manual order", () => {
   const cards = [
     card("normal"),
-    { ...card("high"), priority: "high" as const },
-    { ...card("other", "review"), priority: "high" as const },
+    { ...card("high"), priority: "p1" as const },
+    { ...card("other", "review"), priority: "p1" as const },
   ];
   const props = {
     cards,
@@ -3303,23 +3317,37 @@ it("toolbar dropdown selects and dismisses choices without changing saved card o
   expect(() => byID(control.render(), "sort-options")).toThrow();
 });
 
-it("toolbar sorting uses Default order for the existing saved order and keeps project grouping", () => {
+it("settings sorting shares the host preference across Board, project lanes and List", () => {
   const screen = host();
-  const menu = (id: string) =>
-    find(screen.render(), (e) => e.type === ToolbarSelect && e.props.id === id);
-  menu("workboard-group-menu").props.onSelect("project");
+  const menu = () =>
+    find(
+      screen.render(),
+      (e) => e.type === ToolbarSelect && e.props.id === "workboard-group-menu",
+    );
+  menu().props.onSelect("project");
   const before = structuredClone(runtime.query.data.cardOrderByStage);
-  expect(menu("workboard-sort-menu").props.label).toBe("默认排序");
-  menu("workboard-sort-menu").props.onSelect("priority");
-  expect(menu("workboard-sort-menu").props.label).toBe("优先级排序");
   expect(named(screen.render(), "ProjectBoardView").props.priorityFirst).toBe(
     true,
   );
-  menu("workboard-sort-menu").props.onSelect("default");
-  expect(menu("workboard-group-menu").props.label).toBe("项目分组");
+  expect(() => byID(screen.render(), "workboard-sort-menu")).toThrow();
+  byLabel(screen.render(), strings("zh").settings).props.onPress();
+  let settings = named(screen.render(), "SettingsPage");
+  expect(settings.props.priorityFirst).toBe(true);
+  settings.props.onPriorityFirstChange(false);
+  settings = named(screen.render(), "SettingsPage");
+  expect(settings.props.priorityFirst).toBe(false);
+  settings.props.onBack();
+  expect(menu().props.label).toBe("项目分组");
   expect(named(screen.render(), "ProjectBoardView").props.priorityFirst).toBe(
     false,
   );
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  expect(named(screen.render(), "ListView").props.priorityFirst).toBe(false);
+  byLabel(screen.render(), strings("zh").settings).props.onPress();
+  settings = named(screen.render(), "SettingsPage");
+  settings.props.onPriorityFirstChange(true);
+  named(screen.render(), "SettingsPage").props.onBack();
+  expect(named(screen.render(), "ListView").props.priorityFirst).toBe(true);
   expect(runtime.query.data.cardOrderByStage).toEqual(before);
   expect(runtime.mutation).not.toHaveBeenCalled();
 });
@@ -3330,7 +3358,7 @@ it("priority editor previews, validates, saves and resets a level without changi
   const onChange = vi.fn().mockResolvedValue(false);
   const onClose = vi.fn();
   const editor = mount(PriorityEditor, {
-    priority: "normal",
+    priority: "p2",
     value: DEFAULT_PRIORITY_STYLES,
     onChange,
     onClose,
@@ -3347,7 +3375,7 @@ it("priority editor previews, validates, saves and resets a level without changi
   await byID(editor.render(), "workboard-save-priority").props.onPress();
   expect(onChange).toHaveBeenLastCalledWith({
     ...DEFAULT_PRIORITY_STYLES,
-    normal: { name: "计划中", color: "violet" },
+    p2: { name: "计划中", color: "violet" },
   });
   expect(onClose).not.toHaveBeenCalled();
   expect(
@@ -3359,7 +3387,7 @@ it("priority editor previews, validates, saves and resets a level without changi
   byID(editor.render(), "workboard-reset-priority").props.onPress();
   expect(
     byID(editor.render(), "workboard-priority-name").props.initialValue,
-  ).toBe("普通");
+  ).toBe("P2");
   byID(editor.render(), "workboard-priority-name").props.onChangeText(
     "普通任务",
   );
@@ -3382,12 +3410,12 @@ it("priority settings keep the original save context when settings update during
     theme,
     t: strings("zh"),
   });
-  byID(panel.render(), "workboard-edit-priority-high").props.onPress();
+  byID(panel.render(), "workboard-edit-priority-p1").props.onPress();
   panel.props.onChange = newer;
   expect(named(panel.render(), "PriorityEditor").props.onChange).toBe(original);
 });
 
-it("priority badges use three distinct theme-aware tones and custom labels in picker actions", async () => {
+it("priority badges use four distinct theme-aware tones and custom labels in picker actions", async () => {
   const { PriorityBadge, PriorityPicker } = await import(
     "../client/PriorityPicker"
   );
@@ -3403,23 +3431,23 @@ it("priority badges use three distinct theme-aware tones and custom labels in pi
           t: strings("en"),
         }).props.style.borderColor,
     );
-    expect(new Set(tones).size).toBe(3);
+    expect(new Set(tones).size).toBe(4);
   }
   const onChange = vi.fn().mockResolvedValue(true);
   const picker = mount(PriorityPicker, {
     title: "Task",
-    value: "normal",
+    value: "p2",
     priorityStyles: {
       ...DEFAULT_PRIORITY_STYLES,
-      high: { name: "急件", color: "orange" },
+      p1: { name: "急件", color: "orange" },
     },
     onChange,
     disabled: false,
     theme,
     t: strings("zh"),
   });
-  await byLabel(picker.render(), "急件").props.onPress();
-  expect(onChange).toHaveBeenCalledExactlyOnceWith("high");
+  await byLabel(picker.render(), "P1 · 急件").props.onPress();
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("p1");
 });
 
 it("captures a column resize on press, keeps taps for reset and never treats a drag as a tap", () => {
@@ -3562,56 +3590,167 @@ it("keeps a priority picker open after a rejected pending RPC, allows unrelated 
   const picker = mount(PriorityPicker, pickerElement().props);
   byLabel(
     picker.render(),
-    `${t.priority}: ${task(one).props.card.title} · ${t.priorities.normal}`,
+    `${t.priority}: ${task(one).props.card.title} · ${t.priorities.p2}`,
   ).props.onPress();
-  const write = byLabel(picker.render(), t.priorities.high).props.onPress();
+  const write = byLabel(picker.render(), t.priorities.p1).props.onPress();
   expect(task(one).props.pending).toBe(true);
   expect(task(two).props.pending).toBe(false);
   picker.props = pickerElement().props;
-  expect(byLabel(picker.render(), t.priorities.high).props.disabled).toBe(true);
+  expect(byLabel(picker.render(), t.priorities.p1).props.disabled).toBe(true);
   expect(task(two).props.onPriorityChange).toBeTypeOf("function");
   pending.reject(new Error("Task changed; refresh before saving"));
   await write;
   picker.props = pickerElement().props;
   expect(find(picker.render(), (e) => e.type === Modal).props.open).toBe(true);
   expect(
-    byLabel(picker.render(), t.priorities.normal).props.accessibilityState
-      .selected,
+    byLabel(picker.render(), t.priorities.p2).props.accessibilityState.selected,
   ).toBe(true);
-  expect(byLabel(picker.render(), t.priorities.high).props.disabled).toBe(
-    false,
-  );
+  expect(byLabel(picker.render(), t.priorities.p1).props.disabled).toBe(false);
   expect(runtime.toast.error).toHaveBeenCalled();
   runtime.mutation.mockResolvedValueOnce({
     ...runtime.query.data,
     revision: 2,
     cards: runtime.query.data.cards.map((c: Card) =>
-      c.id === one ? { ...c, priority: "high" } : c,
+      c.id === one ? { ...c, priority: "p1" } : c,
     ),
   });
-  await byLabel(picker.render(), t.priorities.high).props.onPress();
+  await byLabel(picker.render(), t.priorities.p1).props.onPress();
   expect(find(picker.render(), (e) => e.type === Modal).props.open).toBe(false);
   expect(
     runtime.query.data.cards.find((c: Card) => c.id === one).priority,
-  ).toBe("high");
+  ).toBe("p1");
 });
 
 it("can resolve native priority conflicts by selecting the currently displayed rank without hiding other issues", async () => {
   const { PriorityPicker } = await import("../client/PriorityPicker");
   const c = {
     ...card("conflict"),
-    priority: "high" as const,
-    labels: ["priority:high", "priority:low"],
+    priority: "p1" as const,
+    labels: ["P1", "P3"],
     issue: "native-archive-unknown",
   };
   const item = taskComponent(c);
   const control = named(item.render(), "PriorityPicker");
-  expect(control.props.conflicted).toBe(true);
-  expect(text(item.render())).not.toContain("priority:high");
+  expect(text(item.render())).not.toContain("P1");
   expect(text(item.render())).toContain(t.issues["native-archive-unknown"]);
   expect(text(item.render())).toContain(t.issues["priority-labels-conflict"]);
   const change = vi.fn().mockResolvedValue(true);
   const picker = mount(PriorityPicker, { ...control.props, onChange: change });
-  await byLabel(picker.render(), t.priorities.high).props.onPress();
-  expect(change).toHaveBeenCalledExactlyOnceWith("high");
+  await byLabel(picker.render(), t.priorities.p1).props.onPress();
+  expect(change).toHaveBeenCalledExactlyOnceWith("p1");
 });
+
+it("explicit same-P2 picker selection materializes the native label through the real mutation", async () => {
+  const { PriorityPicker } = await import("../client/PriorityPicker");
+  const { fixture, workspace } = await import("./fixtures");
+  const f = fixture();
+  f.inventory.workspaces.push(
+    workspace("same-p2", "Example", ["task:todo", "keep"]),
+  );
+  await f.board.start();
+  try {
+    runtime.query.data = f.board.snapshot();
+    runtime.mutation.mockImplementation((input: any) => f.board.mutate(input));
+    const screen = host();
+    const taskView = named(screen.render(), "BoardView");
+    const taskElement = taskView.props.renderCard(
+      runtime.query.data.cards[0],
+      false,
+    );
+    const item = mount(taskElement.type, taskElement.props);
+    const pickerElement = named(item.render(), "PriorityPicker");
+    const picker = mount(PriorityPicker, pickerElement.props);
+    await byLabel(picker.render(), "P2").props.onPress();
+    expect(f.inventory.workspaces[0].labels).toEqual([
+      "task:todo",
+      "keep",
+      "P2",
+    ]);
+    expect(runtime.query.data.cards[0].priority).toBe("p2");
+  } finally {
+    f.board.dispose();
+  }
+});
+
+it("List priority sorting is stable and blocks same-stage moves while retaining cross-stage and group moves", () => {
+  const a = { ...card("a"), priority: "p2" as const };
+  const c = { ...card("c"), priority: "p0" as const };
+  const d = { ...card("d"), priority: "p2" as const };
+  const test = listScene({
+    cards: [a, c, d],
+    fullCards: [a, c, d],
+    cardOrderByStage: { todo: ["d", "a", "c"] },
+    priorityFirst: true,
+  });
+  const ids = elements(test.tree)
+    .filter((e) => typeof e.type === "function" && e.type.name === "ListTask")
+    .map((e) => e.props.card.id);
+  expect(ids).toEqual(["c", "d", "a"]);
+  const source = listTask(test.tree, "a");
+  expect(source.props.canMoveUp).toBe(false);
+  expect(source.props.canMoveDown).toBe(false);
+  source.props.onReorderKey(-1);
+  const todoY = test.props.groups.findIndex((g: any) => g.id === "todo") * 220;
+  source.props.onBegin(
+    { left: 0, top: todoY + 170, width: 500, height: 50 },
+    100,
+    todoY + 170,
+  );
+  source.props.onEnd(100, todoY + 60);
+  expect(test.props.onReorderCards).not.toHaveBeenCalled();
+  source.props.onBegin(
+    { left: 0, top: todoY + 170, width: 500, height: 50 },
+    100,
+    todoY + 170,
+  );
+  source.props.onEnd(
+    100,
+    test.props.groups.findIndex((g: any) => g.id === "review") * 220 + 20,
+  );
+  expect(test.props.onStage).toHaveBeenCalledWith(a, "review");
+  const group = listGroup(test.view.render(), test.props.groups[0].id);
+  group.props.onReorderKey(1);
+  expect(test.props.onReorder).toHaveBeenCalledOnce();
+  test.props.priorityFirst = false;
+  const manual = test.view.render();
+  expect(
+    elements(manual)
+      .filter((e) => typeof e.type === "function" && e.type.name === "ListTask")
+      .map((e) => e.props.card.id),
+  ).toEqual(["d", "a", "c"]);
+});
+
+it.each(["Board", "List"])(
+  "%s cancels active gestures when priority or sorting changes",
+  (mode) => {
+    const test = mode === "Board" ? orderScene() : listScene();
+    const tree = test.view.render();
+    const source =
+      mode === "Board" ? named(tree, "TaskDragShell") : listTask(tree, "a");
+    source.props.onBegin(
+      { left: 0, top: 100, width: 300, height: 50 },
+      100,
+      100,
+    );
+    test.view.render();
+    test.props.fullCards = test.props.fullCards.map((c: Card) => ({
+      ...c,
+      priority: "p0",
+    }));
+    test.view.render();
+    source.props.onEnd(700, 250);
+    expect(test.props.onStage).not.toHaveBeenCalled();
+    expect(test.props.onReorderCards).not.toHaveBeenCalled();
+    source.props.onBegin(
+      { left: 0, top: 100, width: 300, height: 50 },
+      100,
+      100,
+    );
+    test.view.render();
+    test.props.priorityFirst = !test.props.priorityFirst;
+    test.view.render();
+    source.props.onEnd(700, 250);
+    expect(test.props.onStage).not.toHaveBeenCalled();
+    expect(test.props.onReorderCards).not.toHaveBeenCalled();
+  },
+);

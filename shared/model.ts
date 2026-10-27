@@ -54,19 +54,29 @@ export const GROUP_COLORS = [
   "red",
 ] as const;
 export type GroupColor = (typeof GROUP_COLORS)[number];
-export const PRIORITIES = ["high", "normal", "low"] as const;
+export const PRIORITIES = ["p0", "p1", "p2", "p3"] as const;
 export const prioritySchema = z.enum(PRIORITIES);
 export type Priority = z.infer<typeof prioritySchema>;
 export const PRIORITY_LABELS: Record<Priority, string> = {
-  high: "priority:high",
-  normal: "priority:normal",
-  low: "priority:low",
+  p0: "P0",
+  p1: "P1",
+  p2: "P2",
+  p3: "P3",
+};
+const PRIORITY_ALIASES: Record<string, Priority> = {
+  p0: "p0",
+  p1: "p1",
+  p2: "p2",
+  p3: "p3",
+  "priority:high": "p1",
+  "priority:normal": "p2",
+  "priority:low": "p3",
 };
 export function priorityLabels(
   labels: readonly string[],
   statusNames: readonly string[] = [],
 ): string[] {
-  const managed = new Set(Object.values(PRIORITY_LABELS).map(labelKey));
+  const managed = new Set(Object.keys(PRIORITY_ALIASES));
   // Existing status configurations retain ownership of their labels after upgrade.
   for (const name of statusNames) managed.delete(labelKey(name));
   return [
@@ -80,8 +90,8 @@ export function resolvePriority(
   const present = new Set(priorityLabels(labels, statusNames).map(labelKey));
   return (
     PRIORITIES.find((priority) =>
-      present.has(labelKey(PRIORITY_LABELS[priority])),
-    ) ?? "normal"
+      [...present].some((label) => PRIORITY_ALIASES[label] === priority),
+    ) ?? "p2"
   );
 }
 
@@ -90,15 +100,17 @@ export const priorityStyleSchema = z.object({
   color: z.enum(GROUP_COLORS),
 });
 export const priorityStylesSchema = z.object({
-  high: priorityStyleSchema,
-  normal: priorityStyleSchema,
-  low: priorityStyleSchema,
+  p0: priorityStyleSchema,
+  p1: priorityStyleSchema,
+  p2: priorityStyleSchema,
+  p3: priorityStyleSchema,
 });
 export type PriorityStyles = z.infer<typeof priorityStylesSchema>;
 export const DEFAULT_PRIORITY_STYLES: PriorityStyles = {
-  high: { name: null, color: "red" },
-  normal: { name: null, color: "blue" },
-  low: { name: null, color: "gray" },
+  p0: { name: null, color: "red" },
+  p1: { name: null, color: "orange" },
+  p2: { name: null, color: "blue" },
+  p3: { name: null, color: "gray" },
 };
 export const groupSchema = z.object({
   id: stageSchema,
@@ -365,7 +377,7 @@ export function conversationStatusFor(
  * The stored settings version. The plugin registers this same value, because the host only
  * migrates stored settings when the registered version differs from what it finds.
  */
-export const DATA_SCHEMA_VERSION = 11;
+export const DATA_SCHEMA_VERSION = 12;
 
 export const sourceSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -439,6 +451,13 @@ export const taskSchema = z.object({
   title: z.string().min(1),
   description: z.string(),
   priority: prioritySchema.optional(),
+  // Only clean observations establish attribution; conflicts retain the previous baseline.
+  priorityLabelBaseline: z.array(z.string()).optional(),
+  // Persisted before native writes; only explicit selection can clear an uncertain intent.
+  priorityWrite: z
+    .object({ operationId: z.string(), priority: prioritySchema })
+    .nullable()
+    .optional(),
   projectId: z.string().nullable(),
   projectName: z.string(),
   createdAt: z.string(),

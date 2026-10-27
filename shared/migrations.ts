@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
   dataSchema,
   DATA_SCHEMA_VERSION,
+  DEFAULT_PRIORITY_STYLES,
+  priorityStyleSchema,
   DEFAULT_LABELS,
   DEFAULT_GROUPS,
   groupSchema,
@@ -11,7 +13,34 @@ import {
   taskSchema,
 } from "./model";
 
-const { cardOrderByStage: _cardOrder, ...preV8DataShape } = dataSchema.shape;
+const oldPriority = z.enum(["high", "normal", "low"]);
+const oldTask = taskSchema
+  .omit({ priorityLabelBaseline: true, priorityWrite: true })
+  .extend({
+    priority: oldPriority.optional(),
+    mergedDrafts: z
+      .array(
+        taskSchema.shape.mergedDrafts
+          .unwrap()
+          .element.extend({ priority: oldPriority.optional() }),
+      )
+      .default([]),
+  });
+const oldSettings = settingsSchema.extend({
+  priorityStyles: z
+    .object({
+      high: priorityStyleSchema,
+      normal: priorityStyleSchema,
+      low: priorityStyleSchema,
+    })
+    .optional(),
+});
+const oldDataShape = {
+  ...dataSchema.shape,
+  tasks: z.array(oldTask).default([]),
+  settings: oldSettings.default(() => oldSettings.parse({})),
+};
+const { cardOrderByStage: _cardOrder, ...preV8DataShape } = oldDataShape;
 
 const legacyStages = [
   "todo",
@@ -27,7 +56,7 @@ const legacyGroups = legacyStages.map((kind) => ({
   label: DEFAULT_LABELS[kind],
 }));
 // Legacy versions had a master gate and enabled both subordinate rules by default.
-const v8Settings = settingsSchema.extend({
+const v8Settings = oldSettings.extend({
   autoArchive: z.boolean().default(false),
   archiveDoneEnabled: z.boolean().default(true),
   archiveCanceledEnabled: z.boolean().default(true),
@@ -66,7 +95,7 @@ const legacySettings = priorSettings.omit({ groups: true }).extend({
  * Before v6 a task kept one conversation status plus a string list of agent ids. Stored
  * data from those versions is parsed with this shape and upgraded by `migrateV5`.
  */
-const preV6Task = taskSchema
+const preV6Task = oldTask
   .omit({
     conversationDisplayEvidence: true,
     conversationGateAt: true,
@@ -160,7 +189,7 @@ function migrateV6(values: unknown) {
     .object({
       ...preV8DataShape,
       schemaVersion: z.literal(6).default(6),
-      tasks: z.array(taskSchema.omit({ mergedDrafts: true })).default([]),
+      tasks: z.array(oldTask.omit({ mergedDrafts: true })).default([]),
       settings: preV7Settings.default(() => preV7Settings.parse({})),
     })
     .parse(values);
@@ -220,7 +249,7 @@ function migrateV7(values: unknown) {
 function migrateV8(values: unknown) {
   const previous = z
     .object({
-      ...dataSchema.shape,
+      ...oldDataShape,
       schemaVersion: z.literal(8).default(8),
       settings: v8Settings.default(() => v8Settings.parse({})),
     })
@@ -237,12 +266,44 @@ function migrateV8(values: unknown) {
   });
 }
 
-/** Priority metadata is optional: existing tasks retain their level and default order. */
+/** Earlier paths retain their own priority schema until the final conversion. */
 function migrateV9(values: unknown) {
   const previous = z
-    .object({ ...dataSchema.shape, schemaVersion: z.literal(9).default(9) })
+    .object({ ...oldDataShape, schemaVersion: z.literal(9).default(9) })
     .parse(values);
-  return dataSchema.parse({ ...previous, schemaVersion: DATA_SCHEMA_VERSION });
+  return migrateV11({ ...previous, schemaVersion: 11 });
+}
+
+function migrateV11(values: unknown) {
+  const previous = z
+    .object({ ...oldDataShape, schemaVersion: z.literal(11) })
+    .parse(values);
+  const levels = { high: "p1", normal: "p2", low: "p3" } as const;
+  const styles = previous.settings.priorityStyles;
+  return dataSchema.parse({
+    ...previous,
+    schemaVersion: DATA_SCHEMA_VERSION,
+    settings: {
+      ...previous.settings,
+      priorityStyles: styles
+        ? {
+            p0: DEFAULT_PRIORITY_STYLES.p0,
+            p1: styles.high,
+            p2: styles.normal,
+            p3: styles.low,
+          }
+        : undefined,
+    },
+    tasks: previous.tasks.map((task) => ({
+      ...task,
+      priority: task.priority === undefined ? undefined : levels[task.priority],
+      mergedDrafts: task.mergedDrafts.map((draft) => ({
+        ...draft,
+        priority:
+          draft.priority === undefined ? undefined : levels[draft.priority],
+      })),
+    })),
+  });
 }
 
 function migrateV1(values: unknown) {
@@ -318,14 +379,12 @@ export class InvalidStorageDataError extends Error {
 
 function migrateDataUnsafe(values: unknown, fromVersion: number) {
   if (fromVersion === DATA_SCHEMA_VERSION) return dataSchema.parse(values);
+  if (fromVersion === 11) return migrateV11(values);
   if (fromVersion === 10) {
     const previous = z
-      .object({ ...dataSchema.shape, schemaVersion: z.literal(10) })
+      .object({ ...oldDataShape, schemaVersion: z.literal(10) })
       .parse(values);
-    return dataSchema.parse({
-      ...previous,
-      schemaVersion: DATA_SCHEMA_VERSION,
-    });
+    return migrateV11({ ...previous, schemaVersion: 11 });
   }
   if (fromVersion === 9) return migrateV9(values);
   if (fromVersion === 8) return migrateV8(values);

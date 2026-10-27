@@ -92,7 +92,6 @@ export function TaskItem({
     <PriorityPicker
       title={card.title}
       value={card.priority}
-      conflicted={priorityLabels(card.labels, card.managedLabels).length > 1}
       priorityStyles={board.settings.priorityStyles}
       onChange={onPriorityChange}
       disabled={

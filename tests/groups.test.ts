@@ -456,7 +456,7 @@ it("keeps a pending binding's target group through restart and blocks deletion o
     expect(reopened.snapshot().cards[0]).toMatchObject({
       id: draft.id,
       stage: custom.id,
-      labels: [custom.label],
+      labels: [custom.label, "P2"],
       binding: null,
       description: "Plan",
     });

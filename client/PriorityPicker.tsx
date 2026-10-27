@@ -5,6 +5,7 @@ import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import {
   DEFAULT_PRIORITY_STYLES,
   PRIORITIES,
+  PRIORITY_LABELS,
   type Priority,
   type PriorityStyles,
 } from "../shared/model";
@@ -46,7 +47,9 @@ export function PriorityBadge({
         numberOfLines={1}
         style={{ color, fontSize: 12, fontWeight: "600", flexShrink: 1 }}
       >
-        {style.name ?? t.priorities[value]}
+        {style.name
+          ? `${PRIORITY_LABELS[value]} · ${style.name}`
+          : t.priorities[value]}
       </Text>
     </View>
   );
@@ -54,8 +57,7 @@ export function PriorityBadge({
 
 export function PriorityPicker({
   title,
-  value = "normal",
-  conflicted = false,
+  value = "p2",
   priorityStyles,
   onChange,
   disabled,
@@ -64,7 +66,6 @@ export function PriorityPicker({
 }: {
   title: string;
   value?: Priority;
-  conflicted?: boolean;
   priorityStyles?: PriorityStyles;
   onChange?(priority: Priority): Promise<boolean>;
   disabled: boolean;
@@ -73,9 +74,10 @@ export function PriorityPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const label =
-    (priorityStyles ?? DEFAULT_PRIORITY_STYLES)[value].name ??
-    t.priorities[value];
+  const name = (priorityStyles ?? DEFAULT_PRIORITY_STYLES)[value].name;
+  const label = name
+    ? `${PRIORITY_LABELS[value]} · ${name}`
+    : t.priorities[value];
   return (
     <>
       <Pressable
@@ -114,17 +116,10 @@ export function PriorityPicker({
               <Pressable
                 key={priority}
                 accessibilityRole="button"
-                accessibilityLabel={
-                  (priorityStyles ?? DEFAULT_PRIORITY_STYLES)[priority].name ??
-                  t.priorities[priority]
-                }
+                accessibilityLabel={`${PRIORITY_LABELS[priority]}${(priorityStyles ?? DEFAULT_PRIORITY_STYLES)[priority].name ? ` · ${(priorityStyles ?? DEFAULT_PRIORITY_STYLES)[priority].name}` : ""}`}
                 accessibilityState={{ selected: priority === value }}
                 disabled={disabled || saving}
                 onPress={async () => {
-                  if (priority === value && !conflicted) {
-                    setOpen(false);
-                    return;
-                  }
                   if (!onChange || saving) return;
                   setSaving(true);
                   try {

@@ -7,6 +7,7 @@ import {
 } from "../shared/migrations";
 import {
   DATA_SCHEMA_VERSION,
+  dataSchema,
   DEFAULT_GROUPS,
   DEFAULT_LABELS,
   groupsSchema,
@@ -536,5 +537,52 @@ it.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
       expect(migrated.settings.exclusiveStatusLabels).toBe(choice ?? false);
       expect(migrateData(migrated, DATA_SCHEMA_VERSION)).toEqual(migrated);
     }
+  },
+);
+
+it.each([9, 10, 11])(
+  "converts old priority metadata from schema %s before current validation",
+  (schemaVersion) => {
+    const previous = dataSchema.parse({
+      tasks: [newTask("draft", "Draft", "2026-09-01T00:00:00Z")],
+    });
+    const old = {
+      ...previous,
+      schemaVersion,
+      tasks: [
+        {
+          ...previous.tasks[0],
+          priority: "high",
+          mergedDrafts: [
+            {
+              draftId: "merged",
+              priority: "low",
+              title: "Merged",
+              description: "",
+              mergedAt: "2026-09-01T00:00:00Z",
+              appendedText: "Merged",
+            },
+          ],
+        },
+      ],
+      settings: {
+        ...previous.settings,
+        priorityStyles: {
+          high: { name: "Urgent", color: "violet" },
+          normal: { name: "Planned", color: "blue" },
+          low: { name: null, color: "gray" },
+        },
+      },
+    };
+    const migrated = migrateData(old, schemaVersion);
+    expect(migrated.schemaVersion).toBe(12);
+    expect(migrated.tasks[0].priority).toBe("p1");
+    expect(migrated.tasks[0].mergedDrafts[0].priority).toBe("p3");
+    expect(migrated.settings.priorityStyles).toMatchObject({
+      p0: { name: null, color: "red" },
+      p1: { name: "Urgent", color: "violet" },
+      p2: { name: "Planned", color: "blue" },
+      p3: { name: null, color: "gray" },
+    });
   },
 );

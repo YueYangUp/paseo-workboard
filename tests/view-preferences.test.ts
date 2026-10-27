@@ -19,6 +19,7 @@ describe("view preferences", () => {
     expect(loadViewPreferencesFrom(storage, "a")).toEqual({
       mode: "board",
       collapsedListGroups: [],
+      priorityFirst: true,
     });
     expect(
       saveViewPreferencesTo(storage, "a", {
@@ -29,6 +30,7 @@ describe("view preferences", () => {
     expect(loadViewPreferencesFrom(storage, "a")).toEqual({
       mode: "list",
       collapsedListGroups: ["todo"],
+      priorityFirst: true,
     });
     expect(loadViewPreferencesFrom(storage, "b").mode).toBe("board");
     expect(values.get("paseo-workboard:collapsed-columns:a")).toBe('["done"]');
@@ -40,6 +42,7 @@ describe("view preferences", () => {
       expect(loadViewPreferencesFrom({ getItem: () => value }, "a")).toEqual({
         mode: "board",
         collapsedListGroups: [],
+        priorityFirst: true,
       });
     },
   );
@@ -53,7 +56,11 @@ describe("view preferences", () => {
         },
         "a",
       ),
-    ).toEqual({ mode: "list", collapsedListGroups: ["todo", "done"] });
+    ).toEqual({
+      mode: "list",
+      collapsedListGroups: ["todo", "done"],
+      priorityFirst: true,
+    });
   });
 
   it("reports storage denial without preventing the current view from rendering", () => {
@@ -74,4 +81,21 @@ describe("view preferences", () => {
       vi.unstubAllGlobals();
     }
   });
+});
+
+it("retains an explicit disabled priority-sort preference per host", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  saveViewPreferencesTo(storage, "a", {
+    mode: "board",
+    collapsedListGroups: [],
+    priorityFirst: false,
+  });
+  expect(loadViewPreferencesFrom(storage, "a").priorityFirst).toBe(false);
+  expect(loadViewPreferencesFrom(storage, "b").priorityFirst).toBe(true);
 });
