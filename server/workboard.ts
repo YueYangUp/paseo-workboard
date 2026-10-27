@@ -555,7 +555,10 @@ export class Workboard {
         task.projectId = workspace.projectId;
         task.projectName = workspace.projectDisplayName;
         if (!(task.binding?.target.kind === "new")) {
-          const priority = resolvePriority(workspace.labels);
+          const priority = resolvePriority(
+            workspace.labels,
+            data.settings.groups.map((group) => group.label),
+          );
           if ((task.priority ?? "normal") !== priority) {
             task.priority = priority;
             task.updatedAt = this.stamp(task.updatedAt);
@@ -1068,7 +1071,17 @@ export class Workboard {
     if (!unchanged(previous))
       throw new Error("Settings changed; refresh before saving");
     const next = settingsSchema.parse(settings);
-    if (next.groups.some((group) => priorityLabels([group.label]).length))
+    if (
+      next.groups.some(
+        (group) =>
+          priorityLabels([group.label]).length > 0 &&
+          !previous.settings.groups.some(
+            (old) =>
+              old.id === group.id &&
+              labelKey(old.label) === labelKey(group.label),
+          ),
+      )
+    )
       throw new Error(
         "Priority labels are reserved; choose a different status label",
       );
@@ -1378,6 +1391,8 @@ export class Workboard {
           } else if (input.action === "start") {
             if (!task.binding && task.workspaceId)
               throw new Error("Task already has a workspace");
+            if (input.target.kind === "new")
+              this.checkPriorityTarget(task.priority ?? "normal");
             const stage =
               input.stage ??
               task.binding?.stage ??
@@ -1621,6 +1636,8 @@ export class Workboard {
     if (!binding) return;
     this.bindingInFlight.add(binding.operationId);
     try {
+      if (binding.target.kind === "new")
+        this.checkPriorityTarget(draft.priority ?? "normal");
       const workspaceId =
         binding.workspaceId ??
         (binding.target.kind === "existing"
@@ -1679,7 +1696,10 @@ export class Workboard {
           await this.transitionPriority(
             workspaceId,
             this.task(survivorId).priority ?? "normal",
-            priorityLabels(fresh.labels),
+            priorityLabels(
+              fresh.labels,
+              this.store.current.settings.groups.map((group) => group.label),
+            ),
           );
         }
         await this.store.update((data) => {
@@ -1701,30 +1721,38 @@ export class Workboard {
       this.bindingInFlight.delete(binding.operationId);
     }
   }
+  private checkPriorityTarget(priority: Priority): void {
+    if (
+      priority !== "normal" &&
+      this.store.current.settings.groups.some(
+        (group) =>
+          labelKey(group.label) === labelKey(PRIORITY_LABELS[priority]),
+      )
+    )
+      throw new Error(
+        "Priority label is used by a status group; rename its status label first",
+      );
+  }
   private async transitionPriority(
     id: string,
     priority: Priority,
     expected: string[],
     check: () => void = () => {},
   ): Promise<Workspace> {
-    if (
-      this.store.current.settings.groups.some(
-        (group) => priorityLabels([group.label]).length,
-      )
-    )
-      throw new Error(
-        "Priority labels are reserved; choose a different status label",
-      );
+    this.checkPriorityTarget(priority);
+    const statusNames = this.store.current.settings.groups.map(
+      (group) => group.label,
+    );
     let workspace = await this.host.workspace(id);
     check();
     if (!workspace || workspace.archivingAt)
       throw new Error("Workspace is unavailable or archiving");
-    if (!labelsEqual(priorityLabels(workspace.labels), expected))
+    if (!labelsEqual(priorityLabels(workspace.labels, statusNames), expected))
       throw new Error(
         "Workspace priority labels changed; refresh before saving",
       );
     const target = PRIORITY_LABELS[priority];
-    let observed = priorityLabels(workspace.labels);
+    let observed = priorityLabels(workspace.labels, statusNames);
     const operations = observed
       .filter((name) => labelKey(name) !== labelKey(target))
       .map((name) => ({ name, assigned: false }));
@@ -1740,7 +1768,7 @@ export class Workboard {
       if (
         !workspace ||
         workspace.archivingAt ||
-        !labelsEqual(priorityLabels(workspace.labels), observed)
+        !labelsEqual(priorityLabels(workspace.labels, statusNames), observed)
       )
         throw new Error(
           "Workspace priority labels changed; refresh before saving",
@@ -1757,7 +1785,7 @@ export class Workboard {
         operation.assigned,
       );
       check();
-      observed = priorityLabels(labels);
+      observed = priorityLabels(labels, statusNames);
       if (!labelsEqual(observed, intended))
         throw new Error("Priority synchronization could not be verified");
     }
@@ -1765,8 +1793,8 @@ export class Workboard {
     check();
     if (
       !workspace ||
-      resolvePriority(workspace.labels) !== priority ||
-      priorityLabels(workspace.labels).length > 1
+      resolvePriority(workspace.labels, statusNames) !== priority ||
+      priorityLabels(workspace.labels, statusNames).length > 1
     )
       throw new Error("Priority synchronization could not be verified");
     return workspace;
