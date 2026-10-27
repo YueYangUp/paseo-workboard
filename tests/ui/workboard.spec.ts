@@ -616,3 +616,82 @@ test("keeps pinned titles readable beside drag handles at default and minimum co
     }
   }
 });
+
+test("opens the selected Agent conversation in its native workspace from Board and List", async ({
+  page,
+}, testInfo) => {
+  const directory = path.join(home, `agent-navigation-${Date.now()}`);
+  await mkdir(directory, { recursive: true });
+  const created = await client.createWorkspace({
+    source: { kind: "directory", path: directory },
+    title: "Conversation navigation example",
+  });
+  const workspaceId = created.workspace!.id;
+  const agents: string[] = [];
+  for (const name of [
+    "First example conversation",
+    "Second example conversation",
+  ]) {
+    const agent = await client.createAgent({
+      provider: fixtureId,
+      model: "fixture-model",
+      cwd: directory,
+      workspaceId,
+    });
+    await client.sendAgentMessage(agent.id, `Conversation content: ${name}`);
+    await client.updateAgent(agent.id, { name });
+    agents.push(agent.id);
+  }
+  await client.reloadPlugin(pluginId);
+  await expect
+    .poll(
+      async () =>
+        (await snapshotIfReady())?.cards.find(
+          (c) => c.workspaceId === workspaceId,
+        )?.agents.length,
+    )
+    .toBe(2);
+  const card = (await snapshot()).cards.find(
+    (c) => c.workspaceId === workspaceId,
+  )!;
+  for (const mode of ["board", "list"] as const) {
+    await openWorkboard(page);
+    await page.getByTestId(`workboard-view-${mode}`).click();
+    const item = page.getByTestId(
+      mode === "board"
+        ? `workboard-card-${card.id}`
+        : `workboard-list-task-${card.id}`,
+    );
+    await item
+      .getByRole("button", { name: "Show details", exact: true })
+      .click();
+    const selected = agents[mode === "board" ? 1 : 0];
+    const link = item.getByTestId(`workboard-open-agent-${selected}`);
+    await expect(link).toBeVisible();
+    if (mode === "board") {
+      await item.screenshot({ path: testInfo.outputPath("agent-links.png") });
+      await link.click();
+    } else {
+      await link.focus();
+      await link.press("Enter");
+    }
+    await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}$`));
+    const selectedName =
+      mode === "board"
+        ? "Second example conversation"
+        : "First example conversation";
+    const otherName =
+      mode === "board"
+        ? "First example conversation"
+        : "Second example conversation";
+    await expect(
+      page.getByText(`Conversation content: ${selectedName}`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(`Conversation content: ${otherName}`, { exact: true }),
+    ).toBeHidden();
+    await page.screenshot({
+      path: testInfo.outputPath(`selected-conversation-${mode}.png`),
+    });
+  }
+});
