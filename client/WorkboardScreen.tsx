@@ -1665,22 +1665,31 @@ function TaskModal({
           style={styles.tabScroll}
           contentContainerStyle={styles.projectChoices}
         >
-          <Pressable
-            accessibilityRole="button"
-            {...toggleButtonState(projectId === null)}
-            disabled={disabled || linked}
-            onPress={() => setProjectId(null)}
-            style={[
-              styles.chip,
-              (disabled || linked) && styles.disabledControl,
-              projectId === null && { backgroundColor: theme.colors.surface2 },
-            ]}
-          >
-            <Text style={{ color: theme.colors.foreground }}>
-              {t.unassigned}
-            </Text>
-          </Pressable>
-          {board.projects.map((project) => (
+          {!linked && (
+            <Pressable
+              accessibilityRole="button"
+              {...toggleButtonState(projectId === null)}
+              disabled={disabled}
+              onPress={() => setProjectId(null)}
+              style={[
+                styles.chip,
+                disabled && styles.disabledControl,
+                projectId === null && {
+                  backgroundColor: theme.colors.surface2,
+                },
+              ]}
+            >
+              <Text style={{ color: theme.colors.foreground }}>
+                {t.unassigned}
+              </Text>
+            </Pressable>
+          )}
+          {(linked
+            ? board.projects.filter(
+                (project) => project.id === form.task!.projectId,
+              )
+            : board.projects
+          ).map((project) => (
             <Pressable
               accessibilityRole="button"
               {...toggleButtonState(projectId === project.id)}
@@ -1700,6 +1709,16 @@ function TaskModal({
               </Text>
             </Pressable>
           ))}
+          {linked &&
+            !board.projects.some(
+              (project) => project.id === form.task!.projectId,
+            ) && (
+              <View style={[styles.chip, styles.disabledControl]}>
+                <Text style={{ color: theme.colors.foregroundMuted }}>
+                  {form.task!.projectName || t.unassigned}
+                </Text>
+              </View>
+            )}
         </ScrollView>
         <View style={styles.modalActions}>
           <Pressable

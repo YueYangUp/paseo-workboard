@@ -26,7 +26,9 @@ daemon 分页导入全部活跃 workspace。没有受管理分组标签的 works
 
 每个分组有稳定 ID、名称、受管理标签、业务类型与可选颜色。显示顺序和颜色独立于类型；类型决定草稿落点、进行中侧栏置顶和终态归档资格。至少各保留一个待归类、待开始和已废弃类型组；删除分组区分任务占用和默认落点占用，分别要求移走任务或更改默认分组。新草稿默认落点可选择任意待开始类型组；配置缺失或失效时保留按类型选首组的回退。 开始工作独立解析 `defaultStartWorkGroup`：有效配置的进行中组优先，再取首个进行中组，没有则无目标。StartModal 与服务端共用该解析函数，保留待完成绑定与本次显式 stage 意图。`defaultStartGroup` 仅用于未标记 workspace 导入。缺少开始工作偏好时初始化为 null，不复制导入默认值；ID/类型校验放在设置写入边界，无效存量偏好仍可读取。客户端删除提示与服务端校验均要求先更换显式选定的工作默认组，才能删除该组或改其类型。
 
-Agent 活动单独展示，回复结束不会把任务标为完成。workspace 只聚合未归档 Agent，按 waiting、error、attention、running、idle 的顺序取状态。只有原生 Agent 的 `status: idle`、`lastError` 非空且关注原因不是 error，并且另一个未归档、未报错 Agent 的 `lastUserMessageAt` 严格晚于报错 Agent 的 `updatedAt`，才在聚合中排除该错误。后者只作为错误时间的上界，不能证明健康活动，因为元数据修改也会推进它。证据无效或缺失时保留错误。原生 error 状态、error 关注原因、失败的 provider 子 Agent 和来源不明的错误继续计入需关注。各 Agent 详情保留原始活动状态，该聚合不改变归档门禁。PR/MR 信息来自 Paseo workspace 数据；Workboard 不额外轮询 forge，也不实现另一套合并检测。
+Agent 活动单独展示，回复结束不会把任务标为完成。workspace 只聚合未归档、非委派的 Agent，按 waiting、error、attention、running、idle 的顺序取状态。目录 inventory 和订阅 upsert 都将 Paseo 的 `paseo.parent-agent-id` 标签映射为 `Agent.delegatedBy`。`delegatedBy` 非空的 Agent 不参与该聚合，运行状态也不例外；卡片活动、活动筛选和需关注的活动原因均使用这一结果。provider 子 Agent 使用 `parentAgentId`，仍参与聚合。
+
+在参与聚合的 Agent 中，只有原生 Agent 的 `status: idle`、`lastError` 非空且关注原因不是 error，并且另一个参与聚合、未报错 Agent 的 `lastUserMessageAt` 严格晚于报错 Agent 的 `updatedAt`，才在聚合中排除该错误。后者只作为错误时间的上界，不能证明健康活动，因为元数据修改也会推进它。证据无效或缺失时保留错误。该范围内的原生 error 状态、error 关注原因、失败的 provider 子 Agent 和来源不明的错误继续计入需关注。包括委派 Agent 在内，各 Agent 详情均保留原始活动状态。委派 Agent 也仍参与对话证据和归档安全检查；其运行或等待状态仍会推迟归档。PR/MR 信息来自 Paseo workspace 数据；Workboard 不额外轮询 forge，也不实现另一套合并检测。
 
 ## 保存与并发
 
