@@ -8,6 +8,7 @@ import {
   settingsSchema,
   stageSchema,
   startSchema,
+  prioritySchema,
 } from "./model";
 
 export const snapshotRpc = defineRpc({
@@ -17,6 +18,13 @@ export const snapshotRpc = defineRpc({
 });
 export const CANCEL_BINDING_BUSY_ERROR_CODE = "cancel-binding-busy";
 export const mutationSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("priority"),
+    taskId: z.string(),
+    updatedAt: z.string(),
+    priority: prioritySchema,
+    expectedLabels: z.array(z.string()),
+  }),
   z.object({
     action: z.literal("create"),
     title: z.string().trim().min(1).max(1000),

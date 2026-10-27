@@ -7,6 +7,7 @@ import {
   defaultWorkspaceGroup,
   groupKind,
   labelKey,
+  priorityLabels,
   type Group,
   resolveStage,
   type Board,
@@ -61,6 +62,8 @@ export function attentionReasons(card: Card): string[] {
   if (["waiting", "error", "attention"].includes(card.activity))
     reasons.push(card.activity);
   if (card.stage === "conflict") reasons.push("labels-conflict");
+  if (priorityLabels(card.labels, card.managedLabels).length > 1)
+    reasons.push("priority-labels-conflict");
   if (
     card.issue &&
     attentionIssues.has(card.issue) &&

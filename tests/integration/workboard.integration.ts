@@ -159,6 +159,58 @@ afterAll(async () => {
 });
 
 describe.skipIf(offsetRun)("isolated Paseo workboard", () => {
+  test("synchronizes priority labels without replacing status or unrelated labels", async () => {
+    const directory = path.join(
+      home,
+      "integration-priority",
+      String(Date.now()),
+    );
+    await mkdir(directory, { recursive: true });
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      title: "Priority example",
+    });
+    const workspaceId = created.workspace!.id;
+    for (const name of ["task:todo", "priority:low", "keep:example"]) {
+      await client.setWorkspaceLabel({
+        workspaceId,
+        label: { name, color: "blue" },
+        assigned: true,
+      });
+    }
+    await client.reloadPlugin(pluginId);
+    let card = (await readyBoard()).cards.find(
+      (c) => c.workspaceId === workspaceId,
+    )!;
+    expect(card.priority).toBe("low");
+    const changed = await rpc<Board>("workboard.mutate", {
+      action: "priority",
+      taskId: card.id,
+      updatedAt: card.updatedAt,
+      priority: "high",
+      expectedLabels: ["priority:low"],
+    });
+    expect(changed.cards.find((c) => c.id === card.id)?.priority).toBe("high");
+    const labels = (await client.fetchWorkspaces()).entries.find(
+      (w) => w.id === workspaceId,
+    )!.labels;
+    expect([...(labels ?? [])].sort()).toEqual([
+      "keep:example",
+      "priority:high",
+      "task:todo",
+    ]);
+    await client.setWorkspaceLabel({
+      workspaceId,
+      label: { name: "priority:high", color: "red" },
+      assigned: false,
+    });
+    await client.reloadPlugin(pluginId);
+    card = (await readyBoard()).cards.find(
+      (c) => c.workspaceId === workspaceId,
+    )!;
+    expect(card.priority ?? "normal").toBe("normal");
+    expect(card.stage).toBe("todo");
+  });
   test("persists custom groups, follows native labels and deletes only after tasks move out", async () => {
     const initial = await readyBoard();
     const stamp = Date.now();

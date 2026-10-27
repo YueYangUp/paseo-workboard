@@ -61,8 +61,7 @@ On Linux, `npx playwright install --with-deps --only-shell chromium` also instal
 system libraries. CI runs this command against every Paseo version in the `host`
 matrix of `.github/workflows/ci.yml`. The smoke
 suite uses fictional tasks and the deterministic fixture provider; it covers
-view switching and archive-setting interactions, and fails on uncaught page
-errors. It does not cover all layouts, themes, accessibility, mobile clients,
+view switching, archive-setting interactions, project lanes, priority settings at 1440px and 390px, and card reordering during project scrolling with pointer resizing and reload persistence. It fails on uncaught page errors. It does not cover all layouts, themes, accessibility, mobile clients,
 or providers.
 
 Logs and failure screenshots/traces go to a temporary artifact directory printed

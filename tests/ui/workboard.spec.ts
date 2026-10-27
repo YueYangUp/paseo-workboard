@@ -4,7 +4,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { Board } from "../../shared/model";
+import { cardsForStage, type Board } from "../../shared/model";
+import {
+  DEFAULT_COLUMN_WIDTH,
+  MIN_COLUMN_WIDTH,
+} from "../../client/board-utils";
 import { isTemporaryIntegrationHome } from "../integration/temporary-home";
 
 const run = promisify(execFile);
@@ -236,4 +240,379 @@ test("keeps archive delays visible while disabled and Cancel leaves the rule off
     afterCancel.cards.find((card) => card.title === title)?.archived,
   ).toBeNull();
   expect(pageErrors).toEqual([]);
+});
+
+for (const width of [1440, 390]) {
+  test(`project lanes and custom priorities retain default order at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ colorScheme: width === 390 ? "dark" : "light" });
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    const runId = Date.now();
+    const prefix = width === 390 ? "workboard-order-" : "workboard-card-";
+    const titles = [
+      `Priority example A ${width} ${runId}`,
+      `Priority example B ${width} ${runId}`,
+    ];
+    for (const title of titles)
+      await client.invokePluginRpc(pluginId, "workboard.mutate", {
+        action: "create",
+        title,
+        description: "",
+        projectId: null,
+      });
+    let before = await snapshot();
+    const ids = titles.map(
+      (title) => before.cards.find((card) => card.title === title)!.id,
+    );
+    const stage = before.cards.find((card) => card.id === ids[0])!.stage;
+    const expectedOrder = cardsForStage(
+      before.cards,
+      stage,
+      before.cardOrderByStage,
+    ).map((card) => card.id);
+    await client.invokePluginRpc(pluginId, "workboard.mutate", {
+      action: "reorder-cards",
+      taskId: ids[0],
+      stage,
+      expectedOrder,
+      cardOrder: expectedOrder,
+    });
+    before = await snapshot();
+    await openWorkboard(page);
+    const workboardRoute = page.url();
+    await page.setViewportSize({ width, height: 1000 });
+    // Older hosts remount compact navigation on resize and return to the landing page.
+    // Enter the observed Workboard route after selecting the test viewport.
+    await page.goto(workboardRoute);
+    await page.getByTestId("workboard-view-board").click();
+    await page.getByTestId("workboard-group-menu").click();
+    await page
+      .getByRole("radio", { name: "Group by project", exact: true })
+      .click();
+    const lane = page.getByTestId("workboard-project-lane-project:none");
+    if (width === 390)
+      await lane.getByRole("radio", { name: /^To do \(/ }).click();
+    await expect(lane.getByTestId(`${prefix}${ids[0]}`)).toBeVisible();
+    await page
+      .getByRole("button", {
+        name: `Priority: ${titles[0]} · Normal`,
+        exact: true,
+      })
+      .click();
+    await page.getByRole("button", { name: "High", exact: true }).click();
+    await page.getByTestId("workboard-sort-menu").click();
+    await page
+      .getByRole("radio", { name: "Priority first", exact: true })
+      .click();
+    const order = () =>
+      lane
+        .locator(`[data-testid^="${prefix}"]`)
+        .evaluateAll((nodes) =>
+          nodes.map((node) =>
+            (
+              node as unknown as { getAttribute(key: string): string | null }
+            ).getAttribute("data-testid"),
+          ),
+        );
+    await expect
+      .poll(async () =>
+        (await order()).filter((id) =>
+          ids.some((value) => id === `${prefix}${value}`),
+        ),
+      )
+      .toEqual([`${prefix}${ids[0]}`, `${prefix}${ids[1]}`]);
+    await page.getByTestId("workboard-sort-menu").click();
+    await page
+      .getByRole("radio", { name: "Default order", exact: true })
+      .click();
+    const defaultIds = (await order()).filter((id) =>
+      ids.some((value) => id === `${prefix}${value}`),
+    );
+    expect(defaultIds).toEqual(
+      cardsForStage(
+        before.cards,
+        before.cards.find((card) => card.id === ids[0])!.stage,
+        before.cardOrderByStage,
+      )
+        .filter((card) => ids.includes(card.id))
+        .map((card) => `${prefix}${card.id}`),
+    );
+    expect((await snapshot()).cardOrderByStage).toEqual(
+      before.cardOrderByStage,
+    );
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .last()
+      .click();
+    await page.getByTestId("workboard-edit-priority-high").click();
+    await page
+      .getByTestId("workboard-priority-name")
+      .getByRole("textbox")
+      .fill("Urgent");
+    await page
+      .getByRole("radio", { name: "Color: Violet", exact: true })
+      .click();
+    await page.getByTestId("workboard-save-priority").click();
+    await expect(
+      page.getByTestId("workboard-edit-priority-high"),
+    ).toHaveAttribute("aria-label", "Edit: Urgent");
+    await page.reload();
+    await page.getByTestId("workboard-view-board").click();
+    if (width === 390)
+      await lane.getByRole("radio", { name: /^To do \(/ }).click();
+    await expect(
+      page.getByRole("button", {
+        name: `Priority: ${titles[0]} · Urgent`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .last()
+      .click();
+    await page.getByTestId("workboard-edit-priority-high").click();
+    await page.getByTestId("workboard-reset-priority").click();
+    await page.getByTestId("workboard-save-priority").click();
+    await expect(
+      page.getByTestId("workboard-edit-priority-high"),
+    ).toHaveAttribute("aria-label", "Edit: High");
+    expect(
+      await page.evaluate("document.documentElement.scrollWidth > innerWidth"),
+    ).toBe(false);
+    expect(pageErrors).toEqual([]);
+  });
+}
+
+test("reorders cards after project scrolling and resizes columns with the pointer", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const stamp = Date.now();
+  const prefix = `Geometry ${stamp}`;
+  const projectIds: string[] = [];
+  for (const name of ["Alpha", "Beta"]) {
+    const directory = path.join(home, `geometry-${name}-${stamp}`);
+    await mkdir(directory, { recursive: true });
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      title: `${name} example workspace`,
+    });
+    await client.reloadPlugin(pluginId);
+    await expect
+      .poll(async () =>
+        (await snapshotIfReady())?.cards.some(
+          (c) => c.workspaceId === created.workspace!.id,
+        ),
+      )
+      .toBe(true);
+    projectIds.push(
+      (await snapshot()).cards.find(
+        (c) => c.workspaceId === created.workspace!.id,
+      )!.projectId!,
+    );
+  }
+  const ids: string[][] = [[], []];
+  for (const [index, projectId] of projectIds.entries()) {
+    for (const letter of ["a", "b", "c", "d"]) {
+      const title = `${prefix} ${index} ${letter}`;
+      const next = (await client.invokePluginRpc(pluginId, "workboard.mutate", {
+        action: "create",
+        title,
+        description: "",
+        projectId,
+      })) as Board;
+      ids[index].push(next.cards.find((c) => c.title === title)!.id);
+    }
+  }
+  const before = await snapshot();
+  const stage = before.cards.find((c) => c.id === ids[1][0])!.stage;
+  const fullOrder = cardsForStage(
+    before.cards,
+    stage,
+    before.cardOrderByStage,
+  ).map((c) => c.id);
+  for (const [index, members] of ids.entries())
+    ids[index] = fullOrder.filter((id) => members.includes(id));
+  const expectedOrder = fullOrder;
+  await client.invokePluginRpc(pluginId, "workboard.mutate", {
+    action: "reorder-cards",
+    taskId: ids[0][0],
+    stage,
+    expectedOrder: fullOrder,
+    cardOrder: expectedOrder,
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openWorkboard(page);
+  await page.getByPlaceholder("Search tasks or projects").fill(prefix);
+  await page.getByTestId("workboard-group-menu").click();
+  await page
+    .getByRole("radio", { name: "Group by project", exact: true })
+    .click();
+  const lane = page.getByTestId(
+    `workboard-project-lane-project:id:${projectIds[1]}`,
+  );
+  await lane.scrollIntoViewIfNeeded();
+  const source = lane.getByTestId(`workboard-drag-${ids[1][0]}`);
+  const target = lane.getByTestId(`workboard-card-${ids[1][2]}`);
+  const start = (await source.boundingBox())!;
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    start.x + start.width / 2,
+    start.y + start.height / 2 + 10,
+    { steps: 3 },
+  );
+  // Scroll the project ancestor during the gesture, without changing column size.
+  await lane.evaluate((node) => {
+    type ScrollNode = {
+      parentElement: ScrollNode | null;
+      scrollHeight: number;
+      clientHeight: number;
+      scrollBy(x: number, y: number): void;
+    };
+    const { getComputedStyle } = globalThis as unknown as {
+      getComputedStyle(node: ScrollNode): { overflowY: string };
+    };
+    let parent = (node as unknown as ScrollNode).parentElement;
+    while (parent) {
+      if (
+        parent.scrollHeight > parent.clientHeight &&
+        /auto|scroll/.test(getComputedStyle(parent).overflowY)
+      ) {
+        parent.scrollBy(0, -60);
+        return;
+      }
+      parent = parent.parentElement;
+    }
+    throw new Error("Project scroll container was not found");
+  });
+  const destination = (await target.boundingBox())!;
+  await page.mouse.move(
+    destination.x + destination.width / 2,
+    destination.y + destination.height - 12,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () =>
+      cardsForStage(
+        (await snapshot()).cards,
+        stage,
+        (await snapshot()).cardOrderByStage,
+      )
+        .filter((c) => ids[1].includes(c.id))
+        .map((c) => c.id),
+    )
+    .toEqual([ids[1][1], ids[1][2], ids[1][0], ids[1][3]]);
+  const column = lane.getByTestId(`workboard-column-${stage}`);
+  const initialWidth = (await column.boundingBox())!.width;
+  const handle = lane.getByTestId(`workboard-resize-${stage}`);
+  const rect = (await handle.boundingBox())!;
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(rect.x + rect.width / 2 + 60, rect.y + 60, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  await expect
+    .poll(async () => Math.round((await column.boundingBox())!.width))
+    .toBe(Math.round(initialWidth + 60));
+  await page.reload();
+  await expect(lane).toBeVisible();
+  await expect
+    .poll(async () => Math.round((await column.boundingBox())!.width))
+    .toBe(Math.round(initialWidth + 60));
+  expect(pageErrors).toEqual([]);
+});
+
+test("keeps pinned titles readable beside drag handles at default and minimum column widths", async ({
+  page,
+}) => {
+  const stamp = Date.now();
+  const ids: string[] = [];
+  for (const [index, title] of [
+    "Pinned example task title",
+    "置顶示例任务标题",
+  ].entries()) {
+    const directory = path.join(home, `pinned-layout-${stamp}-${index}`);
+    await mkdir(directory, { recursive: true });
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      title,
+    });
+    const workspaceId = created.workspace!.id;
+    await client.setWorkspacePinned(workspaceId, true);
+    await client.setWorkspaceLabel({
+      workspaceId,
+      label: { name: "task:todo", color: "blue" },
+      assigned: true,
+    });
+    ids.push(workspaceId);
+  }
+  await client.reloadPlugin(pluginId);
+  await expect
+    .poll(
+      async () =>
+        (await snapshotIfReady())?.cards.filter((c) =>
+          ids.includes(c.workspaceId!),
+        ).length,
+    )
+    .toBe(2);
+  const cards = (await snapshot()).cards.filter((c) =>
+    ids.includes(c.workspaceId!),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openWorkboard(page);
+  const column = page.getByTestId("workboard-column-todo");
+  const resize = column.getByTestId("workboard-resize-todo");
+  for (const theme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    // The keyboard reset uses the same persisted width path as the pointer control.
+    await resize.press("Home");
+    for (const width of [DEFAULT_COLUMN_WIDTH, MIN_COLUMN_WIDTH]) {
+      if (width === MIN_COLUMN_WIDTH) {
+        await resize.press("ArrowLeft");
+        await resize.press("ArrowLeft");
+      }
+      await expect
+        .poll(async () => Math.round((await column.boundingBox())!.width))
+        .toBe(width);
+      for (const card of cards) {
+        const task = column.getByTestId(`workboard-card-${card.id}`);
+        const title = task.getByRole("button", {
+          name: `Open workspace: ${card.title}`,
+          exact: true,
+        });
+        const priority = task.getByRole("button", {
+          name: `Priority: ${card.title} · Normal`,
+          exact: true,
+        });
+        const pin = task.getByRole("button", {
+          name: /^Paseo sidebar: existing or manual pin/,
+        });
+        await expect(title).toBeVisible();
+        const titleBox = (await title.boundingBox())!;
+        const priorityBox = (await priority.boundingBox())!;
+        const pinBox = (await pin.boundingBox())!;
+        const dragBox = (await column
+          .getByTestId(`workboard-drag-${card.id}`)
+          .boundingBox())!;
+        expect(titleBox.width).toBeGreaterThanOrEqual(110);
+        expect(priorityBox.y).toBeGreaterThanOrEqual(
+          titleBox.y + titleBox.height - 1,
+        );
+        expect(pinBox.y).toBeGreaterThanOrEqual(
+          titleBox.y + titleBox.height - 1,
+        );
+        expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(dragBox.x + 1);
+        expect(priorityBox.height).toBeGreaterThanOrEqual(36);
+        expect(pinBox.width).toBeGreaterThanOrEqual(36);
+        expect(pinBox.height).toBeGreaterThanOrEqual(36);
+      }
+    }
+  }
 });

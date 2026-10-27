@@ -18,6 +18,7 @@ export type HandleProps = {
   onMove(x: number, y: number): void;
   onEnd(x: number, y: number): void;
   onCancel(): void;
+  onTap?(): void;
 };
 
 export function useDragHandle(props: HandleProps) {
@@ -91,6 +92,8 @@ export function useDragHandle(props: HandleProps) {
           active.current = false;
           if (wasActive && initiated.current)
             latest.current.onEnd(gesture.moveX, gesture.moveY);
+          else if (wasActive && !latest.current.disabled)
+            latest.current.onTap?.();
         },
         onPanResponderTerminationRequest: () => false,
         onPanResponderTerminate: () => {

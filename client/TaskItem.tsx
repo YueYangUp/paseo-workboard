@@ -6,8 +6,10 @@ import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
 import {
   groupKind,
   isTerminalGroup,
+  priorityLabels,
   type Board,
   type Card,
+  type Priority,
 } from "../shared/model";
 import {
   attentionReasons,
@@ -19,6 +21,7 @@ import {
 import { strings } from "./strings";
 import { groupColor, supplementalColor } from "./colors";
 import { HintButton } from "./Hint";
+import { PriorityPicker } from "./PriorityPicker";
 
 function CardAction({
   theme,
@@ -60,6 +63,7 @@ export function TaskItem({
   onCancelBinding,
   onDetachDraft,
   onUndo,
+  onPriorityChange,
   compact = false,
   showDragHandle = false,
   presentation = "card",
@@ -78,11 +82,26 @@ export function TaskItem({
   onCancelBinding(): void;
   onDetachDraft(draftId: string): void;
   onUndo?(): Promise<void>;
+  onPriorityChange?(priority: Priority): Promise<boolean>;
   compact?: boolean;
   showDragHandle?: boolean;
   presentation?: "card" | "row";
 }) {
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const priorityPicker = (
+    <PriorityPicker
+      title={card.title}
+      value={card.priority}
+      conflicted={priorityLabels(card.labels, card.managedLabels).length > 1}
+      priorityStyles={board.settings.priorityStyles}
+      onChange={onPriorityChange}
+      disabled={
+        disabled || pending || card.archived !== null || card.binding !== null
+      }
+      theme={theme}
+      t={t}
+    />
+  );
   const [actionsOpen, setActionsOpen] = useState(false);
   const [titleHovered, setTitleHovered] = useState(false);
   const toast = useToast();
@@ -113,12 +132,20 @@ export function TaskItem({
       : t.conversationReasons[card.conversationReason]
     : null;
   const terminal = isTerminalGroup(card.stage, board.settings.groups);
-  const issue =
+  const issue = [
     card.issue === "no-conversation" || card.issue === "conversation-unknown"
       ? null
-      : issueText(card.issue, t);
+      : issueText(card.issue, t),
+    priorityLabels(card.labels, card.managedLabels).length > 1
+      ? t.issues["priority-labels-conflict"]
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const normalLabels = card.labels.filter(
-    (label) => !card.managedLabels.includes(label),
+    (label) =>
+      !card.managedLabels.includes(label) &&
+      priorityLabels([label]).length === 0,
   );
   const group = board.settings.groups.find((item) => item.id === card.stage);
   const reasons = attentionReasons(card).map((reason) => {
@@ -538,6 +565,7 @@ export function TaskItem({
         ]}
       >
         <View style={[styles.rowMain]}>
+          {priorityPicker}
           <View style={styles.rowTitleBlock}>
             <HintButton
               hint={isDraft ? t.edit : t.openWorkspace}
@@ -726,16 +754,6 @@ export function TaskItem({
             {card.title}
           </Text>
         </HintButton>
-        {card.pinState !== "none" && (
-          <HintButton
-            hint={pinHint}
-            accessibilityRole="button"
-            accessibilityLabel={pinHint}
-            style={styles.pinAction}
-          >
-            <Icon name="Pin" size={13} color={theme.colors.foregroundMuted} />
-          </HintButton>
-        )}
         {pending && (
           <View
             accessible
@@ -748,6 +766,19 @@ export function TaskItem({
               color={theme.colors.foregroundMuted}
             />
           </View>
+        )}
+      </View>
+      <View style={styles.cardPriorityRow}>
+        {priorityPicker}
+        {card.pinState !== "none" && (
+          <HintButton
+            hint={pinHint}
+            accessibilityRole="button"
+            accessibilityLabel={pinHint}
+            style={styles.pinAction}
+          >
+            <Icon name="Pin" size={13} color={theme.colors.foregroundMuted} />
+          </HintButton>
         )}
       </View>
       <Text
@@ -990,6 +1021,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   cardTitlePressable: { flex: 1, minWidth: 0 },
+  cardPriorityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+  },
   cardTitle: { fontWeight: "600", fontSize: 14, lineHeight: 18 },
   cardMeta: { fontSize: 12, lineHeight: 16 },
   changeRequest: {
@@ -1018,7 +1055,6 @@ const styles = StyleSheet.create({
     minHeight: 36,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -5,
   },
   reasonAction: {
     minHeight: 36,

@@ -226,15 +226,23 @@ function migrateV8(values: unknown) {
     })
     .parse(values);
   const { autoArchive, ...settings } = previous.settings;
-  return dataSchema.parse({
+  return migrateV9({
     ...previous,
-    schemaVersion: DATA_SCHEMA_VERSION,
+    schemaVersion: 9,
     settings: {
       ...settings,
       archiveDoneEnabled: autoArchive && settings.archiveDoneEnabled,
       archiveCanceledEnabled: autoArchive && settings.archiveCanceledEnabled,
     },
   });
+}
+
+/** Priority metadata is optional: existing tasks retain their level and default order. */
+function migrateV9(values: unknown) {
+  const previous = z
+    .object({ ...dataSchema.shape, schemaVersion: z.literal(9).default(9) })
+    .parse(values);
+  return dataSchema.parse({ ...previous, schemaVersion: DATA_SCHEMA_VERSION });
 }
 
 function migrateV1(values: unknown) {
@@ -310,18 +318,16 @@ export class InvalidStorageDataError extends Error {
 
 function migrateDataUnsafe(values: unknown, fromVersion: number) {
   if (fromVersion === DATA_SCHEMA_VERSION) return dataSchema.parse(values);
-  if (fromVersion === 9) {
+  if (fromVersion === 10) {
     const previous = z
-      .object({
-        ...dataSchema.shape,
-        schemaVersion: z.literal(9).default(9),
-      })
+      .object({ ...dataSchema.shape, schemaVersion: z.literal(10) })
       .parse(values);
     return dataSchema.parse({
       ...previous,
       schemaVersion: DATA_SCHEMA_VERSION,
     });
   }
+  if (fromVersion === 9) return migrateV9(values);
   if (fromVersion === 8) return migrateV8(values);
   if (fromVersion === 7) return migrateV7(values);
   if (fromVersion === 6) return migrateV6(values);
@@ -355,7 +361,7 @@ function migrateDataUnsafe(values: unknown, fromVersion: number) {
 export function migrateData(values: unknown, fromVersion: number) {
   try {
     const migrated = migrateDataUnsafe(values, fromVersion);
-    if (fromVersion < DATA_SCHEMA_VERSION) {
+    if (fromVersion < 10) {
       // Inspect the raw value before schema defaults erase the missing preference.
       const previous = z
         .object({

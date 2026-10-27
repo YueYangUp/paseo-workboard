@@ -32,6 +32,7 @@ import {
   stageAtX,
   moveCardToAnchor,
 } from "./board-utils";
+import { sortPriorityCards } from "./project-groups";
 import { groupTitle, stageTitle, strings } from "./strings";
 import {
   dragCursor,
@@ -70,6 +71,8 @@ type Gesture = {
 };
 export type BoardViewProps = {
   hostId: string;
+  layoutScope?: string;
+  priorityFirst?: boolean;
   cards: Card[];
   fullCards: Card[];
   cardOrderByStage: CardOrderByStage;
@@ -106,6 +109,14 @@ export type BoardViewProps = {
   groupColor(group: Group): string;
 };
 
+export function displayCardsForStage(
+  props: Pick<BoardViewProps, "cards" | "cardOrderByStage" | "priorityFirst">,
+  stage: Stage,
+): Card[] {
+  const cards = cardsForStage(props.cards, stage, props.cardOrderByStage);
+  return props.priorityFirst ? sortPriorityCards(cards) : cards;
+}
+
 export function BoardView(props: BoardViewProps) {
   const {
     cards,
@@ -119,6 +130,9 @@ export function BoardView(props: BoardViewProps) {
     renderCard,
   } = props;
   const toast = useToast();
+  const layoutKey = props.layoutScope
+    ? JSON.stringify([props.hostId, props.layoutScope])
+    : props.hostId;
   const viewport = useRef<View>(null);
   const scroller = useRef<NativeScrollView>(null);
   const compactTabs = useRef<Record<string, View | null>>({});
@@ -155,9 +169,9 @@ export function BoardView(props: BoardViewProps) {
   const contentWidth = useRef(0);
   const scrollX = useRef(0);
   const [height, setHeight] = useState(500);
-  const [widths, setWidths] = useState(() => loadColumnWidths(props.hostId));
+  const [widths, setWidths] = useState(() => loadColumnWidths(layoutKey));
   const [collapsed, setCollapsed] = useState(
-    () => new Set(loadCollapsedColumns(props.hostId)),
+    () => new Set(loadCollapsedColumns(layoutKey)),
   );
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
@@ -203,15 +217,14 @@ export function BoardView(props: BoardViewProps) {
     );
     widthsRef.current = next;
     setWidths(next);
-    if (!saveColumnWidths(latest.current.hostId, next))
-      toast.error(t.layoutSaveFailed);
+    if (!saveColumnWidths(layoutKey, next)) toast.error(t.layoutSaveFailed);
   };
   const setColumnCollapsed = (id: string, value: boolean) => {
     setCollapsed((current) => {
       const next = new Set(current);
       if (value) next.add(id);
       else next.delete(id);
-      if (!saveCollapsedColumns(props.hostId, [...next]))
+      if (!saveCollapsedColumns(layoutKey, [...next]))
         toast.error(t.layoutSaveFailed);
       return next;
     });
@@ -238,11 +251,12 @@ export function BoardView(props: BoardViewProps) {
   };
   useEffect(() => {
     cancel();
-  }, [disabled, compact, groupSignature, props.filterKey]);
+  }, [disabled, compact, groupSignature, props.filterKey, props.priorityFirst]);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
       cleanup.current();
+      session.current = null;
     },
     [],
   );
@@ -257,7 +271,7 @@ export function BoardView(props: BoardViewProps) {
     );
   };
   const anchorAtY = (current: Gesture, y: number) => {
-    if (!current.card) return null;
+    if (!current.card || latest.current.priorityFirst) return null;
     const list = lists.current[current.card.stage];
     if (!list) return null;
     const contentY = y - list.top + list.scrollY;
@@ -281,6 +295,7 @@ export function BoardView(props: BoardViewProps) {
   const moveCardRelative = async (card: Card, direction: number) => {
     if (
       latest.current.disabled ||
+      latest.current.priorityFirst ||
       latest.current.orderPending?.has(card.stage) ||
       card.binding ||
       card.archived
@@ -313,8 +328,7 @@ export function BoardView(props: BoardViewProps) {
       void moveCardRelative(card, key === "ArrowUp" ? -1 : 1);
       return true;
     });
-  const tick = () => {
-    timer.current = null;
+  const updateGesture = () => {
     const current = session.current;
     if (!current) return;
     const view = bounds.current;
@@ -386,7 +400,15 @@ export function BoardView(props: BoardViewProps) {
         setInsertion(next[next.indexOf(current.id) + 1] ?? null);
       }
     }
-    if (scrolling) queueTick();
+    queueTick();
+  };
+  const tick = () => {
+    timer.current = null;
+    const current = session.current;
+    if (current)
+      measureViewport(() => {
+        if (session.current === current) updateGesture();
+      });
   };
   const queueTick = () => {
     if (!timer.current) timer.current = setTimeout(tick, 16);
@@ -413,11 +435,9 @@ export function BoardView(props: BoardViewProps) {
       widths: widthsRef.current,
       expectedCardOrder: card ? completeOrder(card.stage) : [],
       visibleCardIds: card
-        ? cardsForStage(
-            latest.current.cards,
-            card.stage,
-            latest.current.cardOrderByStage,
-          ).map((item) => item.id)
+        ? displayCardsForStage(latest.current, card.stage).map(
+            (item) => item.id,
+          )
         : [],
       filterKey: latest.current.filterKey,
     };
@@ -426,11 +446,7 @@ export function BoardView(props: BoardViewProps) {
       Object.fromEntries(
         latest.current.groups.map((group) => [
           group.id,
-          cardsForStage(
-            latest.current.cards,
-            group.id,
-            latest.current.cardOrderByStage,
-          ),
+          displayCardsForStage(latest.current, group.id),
         ]),
       ),
     );
@@ -448,7 +464,7 @@ export function BoardView(props: BoardViewProps) {
     session.current.y = y;
     queueTick();
   };
-  const end = (x: number, y: number) => {
+  const finishDrop = (x: number, y: number) => {
     const current = session.current;
     if (!current) return;
     if (
@@ -491,7 +507,11 @@ export function BoardView(props: BoardViewProps) {
         return;
       }
       if (destination === current.card.stage) {
-        if (latest.current.orderPending?.has(destination)) return;
+        if (
+          latest.current.priorityFirst ||
+          latest.current.orderPending?.has(destination)
+        )
+          return;
         const anchor = anchorAtY(current, y);
         if (anchor) {
           const next = moveCardToAnchor(
@@ -516,10 +536,45 @@ export function BoardView(props: BoardViewProps) {
       }
     }
   };
-  const measureViewport = () =>
-    viewport.current?.measureInWindow((left, top, width, measuredHeight) => {
-      bounds.current = { left, top, width, height: measuredHeight };
-    });
+  const end = (x: number, y: number) => {
+    const current = session.current;
+    if (current)
+      measureViewport(() => {
+        if (session.current === current) finishDrop(x, y);
+      });
+  };
+  // Ancestor scrolling changes window coordinates without emitting column onLayout.
+  const measureViewport = (done: () => void = () => {}) => {
+    const measures: Array<(next: () => void) => void> = [];
+    if (viewport.current)
+      measures.push((next) =>
+        viewport.current!.measureInWindow((left, top, width, height) => {
+          bounds.current = { left, top, width, height };
+          next();
+        }),
+      );
+    for (const [id, scroller] of Object.entries(listScrollers.current)) {
+      const view = scroller?.getNativeScrollRef?.();
+      if (view?.measureInWindow)
+        measures.push((next) =>
+          view.measureInWindow(
+            (_left: number, top: number, _width: number, height: number) => {
+              Object.assign(listState(id), { top, height });
+              next();
+            },
+          ),
+        );
+    }
+    let remaining = measures.length;
+    if (!remaining) {
+      done();
+      return;
+    }
+    for (const measure of measures)
+      measure(() => {
+        if (--remaining === 0) done();
+      });
+  };
   const relativeMove = async (id: string, direction: number) => {
     const ids = latest.current.groups.map((group) => group.id);
     const index = ids.indexOf(id);
@@ -615,7 +670,7 @@ export function BoardView(props: BoardViewProps) {
                         selectCompactGroup(group.id, key),
                       )}
                       accessibilityRole="radio"
-                      accessibilityLabel={`${groupTitle(group, t)} (${cardsForStage(cards, group.id, props.cardOrderByStage).length})`}
+                      accessibilityLabel={`${groupTitle(group, t)} (${displayCardsForStage(props, group.id).length})`}
                       aria-checked={stage === group.id}
                       accessibilityState={{ checked: stage === group.id }}
                       tabIndex={stage === group.id ? 0 : -1}
@@ -648,11 +703,7 @@ export function BoardView(props: BoardViewProps) {
                         ]}
                       >
                         {groupTitle(group, t)} (
-                        {
-                          cardsForStage(cards, group.id, props.cardOrderByStage)
-                            .length
-                        }
-                        )
+                        {displayCardsForStage(props, group.id).length})
                       </Text>
                     </Pressable>
                   ))}
@@ -700,8 +751,8 @@ export function BoardView(props: BoardViewProps) {
             <ScrollView key={stage} contentContainerStyle={styles.compactList}>
               {selectedGroup?.kind === "todo" &&
                 props.renderQuickCreate?.(selectedGroup)}
-              {cardsForStage(cards, stage, props.cardOrderByStage).length ? (
-                cardsForStage(cards, stage, props.cardOrderByStage).map(
+              {displayCardsForStage(props, stage).length ? (
+                displayCardsForStage(props, stage).map(
                   (card, index, visible) => (
                     <View
                       key={card.id}
@@ -720,6 +771,7 @@ export function BoardView(props: BoardViewProps) {
                             accessibilityLabel={`${direction < 0 ? t.moveCardUp : t.moveCardDown}: ${card.title}`}
                             disabled={
                               disabled ||
+                              props.priorityFirst ||
                               props.orderPending?.has(card.stage) ||
                               !!card.archived ||
                               !!card.binding ||
@@ -767,8 +819,7 @@ export function BoardView(props: BoardViewProps) {
           >
             {groups.map((group) => {
               const stageCards =
-                held?.[group.id] ??
-                cardsForStage(cards, group.id, props.cardOrderByStage);
+                held?.[group.id] ?? displayCardsForStage(props, group.id);
               const isCollapsed = collapsed.has(group.id);
               return (
                 <BoardColumn
@@ -1169,11 +1220,7 @@ export function BoardView(props: BoardViewProps) {
                       style={{ flex: 1, color: theme.colors.foreground }}
                     >
                       {groupTitle(group, t)} (
-                      {
-                        cardsForStage(cards, group.id, props.cardOrderByStage)
-                          .length
-                      }
-                      )
+                      {displayCardsForStage(props, group.id).length})
                     </Text>
                     {collapsed.has(group.id) && !compact && (
                       <Icon
@@ -1447,14 +1494,20 @@ function BoardColumn({
     measure: measured,
     onBegin: onGroupBegin,
   });
+  const lastPress = useRef(0);
   const resize = useDragHandle({
     ...gesture,
     disabled,
     horizontal: true,
+    captureStart: true,
     measure: measured,
     onBegin: onResizeBegin,
+    onTap: () => {
+      const now = Date.now();
+      if (now - lastPress.current < 350) onWidthKey(0);
+      lastPress.current = now;
+    },
   });
-  const lastPress = useRef(0);
   const [resizeHovered, setResizeHovered] = useState(false);
   const [resizeFocused, setResizeFocused] = useState(false);
   return (
@@ -1600,7 +1653,7 @@ function BoardColumn({
           onScroll={(event) => onListScroll(event.nativeEvent.contentOffset.y)}
           scrollEventThrottle={16}
           onContentSizeChange={(_width, height) => onListContentHeight(height)}
-          style={{ flex: 1 }}
+          style={{ flex: 1, marginRight: 28 }}
           contentContainerStyle={styles.cards}
         >
           {children}
@@ -1642,13 +1695,8 @@ function BoardColumn({
           onPointerLeave={() => setResizeHovered(false)}
           style={[styles.resize, dragCursor(true)]}
         >
-          <Pressable
-            disabled={disabled}
-            onPress={() => {
-              const now = Date.now();
-              if (now - lastPress.current < 350) onWidthKey(0);
-              lastPress.current = now;
-            }}
+          <View
+            pointerEvents="none"
             accessible={false}
             style={{
               flex: 1,
@@ -1668,7 +1716,7 @@ function BoardColumn({
                     : theme.colors.border,
               }}
             />
-          </Pressable>
+          </View>
         </View>
       )}
     </View>
@@ -1745,10 +1793,10 @@ const styles = StyleSheet.create({
   },
   resize: {
     position: "absolute",
-    right: -5,
+    right: 0,
     top: 42,
     bottom: 0,
-    width: 12,
+    width: 36,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 5,

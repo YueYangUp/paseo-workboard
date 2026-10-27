@@ -3,6 +3,24 @@ import type { Group, GroupColor } from "../shared/model";
 export type Language = "zh" | "en";
 
 const zh = {
+  grouping: "分组方式",
+  sorting: "排序方式",
+  projectGrouping: "项目分组",
+  statusGrouping: "状态分组",
+  defaultSort: "默认排序",
+  groupByProject: "按项目分组",
+  groupByStatus: "按状态分组",
+  priorityFirst: "优先级排序",
+  priority: "优先级",
+  priorities: { high: "高", normal: "普通", low: "低" },
+  prioritySettings: "优先级",
+  prioritySettingsHint:
+    "从上到下按优先级排序。自定义名称和颜色会同步到所有任务，不改变已有任务的等级和默认顺序。",
+  priorityName: "名称",
+  priorityColor: "颜色",
+  priorityNameInvalid: "请输入 1–24 个字符的名称。",
+  prioritySaveFailed: "保存失败，请刷新后重试。",
+  resetPriority: "恢复此档默认值",
   boardView: "看板",
   listView: "列表",
   expandAll: "展开全部",
@@ -285,6 +303,7 @@ const zh = {
     "no-conversation": "尚无对话",
     "conversation-unknown": "对话时间待核实",
     "labels-conflict": "标签冲突",
+    "priority-labels-conflict": "优先级标签冲突，请重新选择优先级",
     "agent-busy": "Agent 仍在工作",
     "terminal-open": "请先关闭 terminal",
     "script-running": "workspace script 仍在运行",
@@ -362,6 +381,15 @@ const zh = {
       "分组顺序已变化，请刷新后再调整。",
     "Group order is invalid": "分组顺序无效，请刷新后重试。",
     "Task is archived": "任务已归档，请到归档页处理。",
+    "Workspace priority labels changed; refresh before saving":
+      "优先级标签已变化，请刷新后重试。",
+    "Priority synchronization could not be verified":
+      "无法确认优先级同步结果，请刷新后检查。",
+    "Binding is pending": "正在关联工作区，请稍后重试。",
+    "Priority labels are reserved; choose a different status label":
+      "优先级标签是保留标签，请为状态选择其他标签。",
+    "Priority label is used by a status group; rename its status label first":
+      "此优先级标签已被状态分组占用，请先修改该分组的状态标签。",
     "Task changed; refresh before saving": "任务已变化，请刷新后再保存。",
     "Task already has a workspace": "任务已绑定 workspace，请刷新。",
     "Add an In progress group before starting work":
@@ -430,6 +458,24 @@ const zh = {
 };
 
 const en: typeof zh = {
+  grouping: "Grouping",
+  sorting: "Sorting",
+  projectGrouping: "By project",
+  statusGrouping: "By status",
+  defaultSort: "Default order",
+  groupByProject: "Group by project",
+  groupByStatus: "Group by status",
+  priorityFirst: "Priority first",
+  priority: "Priority",
+  priorities: { high: "High", normal: "Normal", low: "Low" },
+  prioritySettings: "Priorities",
+  prioritySettingsHint:
+    "Ordered from highest to lowest. Custom names and colors apply to all tasks without changing their levels or default order.",
+  priorityName: "Name",
+  priorityColor: "Color",
+  priorityNameInvalid: "Enter a name of 1–24 characters.",
+  prioritySaveFailed: "Could not save. Refresh and try again.",
+  resetPriority: "Restore this level’s defaults",
   boardView: "Board",
   listView: "List",
   expandAll: "Expand all",
@@ -733,6 +779,7 @@ const en: typeof zh = {
     "no-conversation": "No conversation yet",
     "conversation-unknown": "Conversation time needs verification",
     "labels-conflict": "Label conflict",
+    "priority-labels-conflict": "Priority label conflict; choose a priority",
     "agent-busy": "An agent is still working",
     "terminal-open": "Close the terminal first",
     "script-running": "A workspace script is still running",
@@ -819,6 +866,15 @@ const en: typeof zh = {
       "Group order changed. Refresh before reordering.",
     "Group order is invalid": "Group order is invalid. Refresh and retry.",
     "Task is archived": "The task is archived. Open Archive to resolve it.",
+    "Workspace priority labels changed; refresh before saving":
+      "Workspace priority labels changed. Refresh before saving.",
+    "Priority synchronization could not be verified":
+      "Priority synchronization could not be verified. Refresh and review.",
+    "Binding is pending": "Workspace binding is pending. Try again later.",
+    "Priority labels are reserved; choose a different status label":
+      "Priority labels are reserved. Choose a different status label.",
+    "Priority label is used by a status group; rename its status label first":
+      "This priority label is used by a status group. Rename that group's status label first.",
     "Task changed; refresh before saving":
       "The task changed. Refresh before saving.",
     "Task already has a workspace":
