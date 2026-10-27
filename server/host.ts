@@ -69,6 +69,7 @@ export type Agent = Pick<
   Partial<Pick<PaseoAgent, "status" | "lastError" | "attentionReason">> & {
     activity: Card["activity"];
     parentAgentId?: string;
+    delegatedBy?: string;
     subagentId?: string;
     /**
      * Whether this parent's provider children could be listed in this inventory. `skipped`
@@ -242,6 +243,7 @@ export class PaseoHost implements Host {
         this.agentUpdates.set(change.agent.id, {
           ...change.agent,
           activity: activity(change.agent),
+          delegatedBy: change.agent.labels?.["paseo.parent-agent-id"],
         });
         this.changed(change.agent.workspaceId, true);
       } else {
@@ -325,7 +327,11 @@ export class PaseoHost implements Host {
     const agentMap = new Map<string, Agent>(
       agents.map(({ agent }) => [
         agent.id,
-        { ...agent, activity: activity(agent) },
+        {
+          ...agent,
+          activity: activity(agent),
+          delegatedBy: agent.labels?.["paseo.parent-agent-id"],
+        },
       ]),
     );
     for (const [id, value] of this.workspaceUpdates) {

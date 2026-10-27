@@ -55,7 +55,9 @@ Cards and list rows show task title, project, activity, and the latest conversat
 
 A bound workspace with no Agents and an unknown conversation time shows "No Agents" in place of the conversation time. Unknown conversation time alone does not make an agentless workspace need attention; other warnings still apply. Archive safety checks are unchanged.
 
-Current Agent failures and failed provider subagents keep the workspace in Needs attention even while another Agent keeps working. An idle Agent's leftover error can stop determining the task's activity after a later user message to another unarchived Agent without an error. Renaming an Agent or editing its labels does not count as recovery. The original error remains visible in the expanded Agent details.
+Paseo-delegated subagents are treated as part of their parent Agent. Their waiting, error, unread, and running states do not contribute to workspace activity, activity filters, or the activity reasons for Needs attention. Their original states remain visible in expanded Agent details, and their conversation evidence and running or waiting states still count in archive safety checks. Provider subagents are distinct from delegated Agents and keep their existing behavior.
+
+Current failures of non-delegated Agents and failed provider subagents keep the workspace in Needs attention even while another Agent keeps working. An idle Agent's leftover error can stop determining the task's activity after a later user message to another unarchived, non-delegated Agent without an error. Renaming an Agent or editing its labels does not count as recovery. The original error remains visible in the expanded Agent details.
 
 Cards reserve space for the drag handle only in desktop columns. Actions wrap within narrow cards, use a two-pixel gap, and highlight on hover or keyboard focus. Warning text uses the same size as card metadata.
 

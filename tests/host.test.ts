@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type {
   PaseoApi,
+  PaseoAgent,
   OwnedSubscription,
   SubscriptionObserver,
 } from "@getpaseo/client";
@@ -11,7 +12,7 @@ import { Store } from "../server/store";
 import { Workboard } from "../server/workboard";
 import { settingsSchema } from "../shared/model";
 import { fixture, workspace } from "./fixtures";
-import type { ProviderChild, Workspace } from "../server/host";
+import type { Inventory, ProviderChild, Workspace } from "../server/host";
 
 it("reads every page and rejects a cursor loop instead of silently truncating", async () => {
   expect(
@@ -140,7 +141,10 @@ it("keeps directory and subagent subscriptions across inventories, overlays off-
 });
 
 function providerHost(
-  parent: Record<string, unknown> | Record<string, unknown>[],
+  parent:
+    | Record<string, unknown>
+    | Record<string, unknown>[]
+    | (() => Promise<Record<string, unknown>[]>),
   compat: PaseoCompat,
   changed: (workspaceId?: string, agentsChanged?: boolean) => void = vi.fn(),
   observers: SubscriptionObserver<unknown>[] = [],
@@ -179,7 +183,12 @@ function providerHost(
     },
     agents: {
       list: async (options: { subscribe?: object }) => ({
-        entries: (Array.isArray(parent) ? parent : [parent]).map((agent) => ({
+        entries: (typeof parent === "function"
+          ? await parent()
+          : Array.isArray(parent)
+            ? parent
+            : [parent]
+        ).map((agent) => ({
           agent,
         })),
         subscription: options.subscribe ? subscribe() : undefined,
@@ -211,6 +220,169 @@ const parentAgent = {
   lastError: null,
   requiresAttention: false,
 };
+
+it.each([
+  { activity: "attention", status: "idle", requiresAttention: true },
+  { activity: "waiting", status: "idle", attentionReason: "permission" },
+  { activity: "error", status: "error" },
+  { activity: "running", status: "running" },
+])(
+  "projects delegated $activity from inventory and restores workspace activity when the label is removed",
+  async ({ activity, ...source }) => {
+    const test = fixture();
+    const delegated = {
+      ...parentAgent,
+      id: "delegated",
+      ...source,
+      labels: { "paseo.parent-agent-id": "parent" } as Record<string, string>,
+    };
+    const native = providerHost(
+      [{ ...parentAgent, status: "idle" }, delegated],
+      {
+        subagents: async () => [],
+      } as unknown as PaseoCompat,
+    );
+    const board = new Workboard(
+      {
+        ...test.host,
+        inventory: native.inventory.bind(native),
+        dispose: () => native.dispose(),
+      },
+      test.store,
+      test.now,
+    );
+    try {
+      const inventory = await native.inventory();
+      expect(
+        inventory.agents.find((agent) => agent.id === delegated.id),
+      ).toMatchObject({
+        delegatedBy: "parent",
+        activity,
+      });
+      await board.start();
+      expect(board.snapshot().cards[0].activity).toBe("idle");
+      expect(
+        board
+          .snapshot()
+          .cards[0].agents.find((agent) => agent.id === delegated.id),
+      ).toMatchObject({ activity });
+
+      delegated.labels = {};
+      const refreshed = await native.inventory();
+      expect(
+        refreshed.agents.find((agent) => agent.id === delegated.id)
+          ?.delegatedBy,
+      ).toBeUndefined();
+      await board.refresh();
+      expect(board.snapshot().cards[0].activity).toBe(activity);
+    } finally {
+      board.dispose();
+    }
+  },
+);
+
+it.each([
+  {
+    change: "addition",
+    before: undefined,
+    after: "parent",
+    initialActivity: "attention",
+    activity: "idle",
+  },
+  {
+    change: "removal",
+    before: "parent",
+    after: undefined,
+    initialActivity: "idle",
+    activity: "attention",
+  },
+])(
+  "applies a delegation-label $change received while inventory is in flight",
+  async ({ before, after, initialActivity, activity }) => {
+    const test = fixture();
+    const delegated: PaseoAgent = {
+      ...parentAgent,
+      id: "delegated",
+      status: "idle",
+      provider: "fixture",
+      cwd: "/fixture",
+      model: null,
+      createdAt: parentAgent.updatedAt,
+      currentModeId: null,
+      availableModes: [],
+      persistence: null,
+      capabilities: {
+        supportsStreaming: false,
+        supportsSessionPersistence: false,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: false,
+      },
+      lastError: undefined,
+      requiresAttention: true,
+      labels: before ? { "paseo.parent-agent-id": before } : {},
+    };
+    const listed = [{ ...parentAgent, status: "idle" }, delegated];
+    const list = vi.fn(async (): Promise<Record<string, unknown>[]> => listed);
+    const observers: SubscriptionObserver<unknown>[] = [];
+    const native = providerHost(
+      list,
+      { subagents: async () => [] } as unknown as PaseoCompat,
+      vi.fn(),
+      observers,
+    );
+    let projected: Inventory | undefined;
+    const board = new Workboard(
+      {
+        ...test.host,
+        inventory: async () => (projected = await native.inventory()),
+        dispose: () => native.dispose(),
+      },
+      test.store,
+      test.now,
+    );
+    try {
+      await board.start();
+      expect(board.snapshot().cards[0].activity).toBe(initialActivity);
+
+      const entered = deferred<void>();
+      const response = deferred<Record<string, unknown>[]>();
+      list.mockImplementationOnce(() => {
+        entered.resolve();
+        return response.promise;
+      });
+      const refreshing = board.refresh();
+      await entered.promise;
+      observers[1].update({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: {
+            ...delegated,
+            updatedAt: "2026-08-04T00:00:00.000Z",
+            labels: after ? { "paseo.parent-agent-id": after } : {},
+          },
+        },
+      });
+      response.resolve(listed);
+      await refreshing;
+
+      expect(
+        projected?.agents.find((agent) => agent.id === delegated.id)
+          ?.delegatedBy,
+      ).toBe(after);
+      expect(board.snapshot().cards[0].activity).toBe(activity);
+      expect(
+        board
+          .snapshot()
+          .cards[0].agents.find((agent) => agent.id === delegated.id),
+      ).toMatchObject({ activity: "attention" });
+    } finally {
+      board.dispose();
+    }
+  },
+);
 
 it.each([
   { status: "error", attentionReason: null },

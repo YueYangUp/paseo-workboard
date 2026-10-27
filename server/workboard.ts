@@ -109,7 +109,9 @@ const hidden = (task: Task) =>
   task.archived?.status === "archived" || task.archived?.status === "external";
 /** Only a lastError-only idle Agent can be superseded by a newer user message. */
 function workspaceActivity(agents: readonly Agent[]): Card["activity"] {
-  const live = agents.filter((agent) => !agent.archivedAt);
+  const live = agents.filter(
+    (agent) => !agent.archivedAt && !agent.delegatedBy,
+  );
   const healthyTimes = live
     .filter((agent) => agent.activity !== "error")
     .map((agent) => Date.parse(agent.lastUserMessageAt ?? ""))
