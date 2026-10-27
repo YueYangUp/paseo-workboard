@@ -494,6 +494,7 @@ it("projects native MR details through the board RPC, updates them and clears re
         title: "Fix workspace sync",
         state: "draft",
         checksStatus: "pending",
+        checkCounts: null,
         reviewDecision: "changes_requested",
       },
     });
@@ -507,6 +508,49 @@ it("projects native MR details through the board RPC, updates them and clears re
     expect(
       withDraft.cards.find((card) => !card.workspaceId)?.changeRequest,
     ).toBeNull();
+    inventory.workspaces[0].githubRuntime = {
+      pullRequest: {
+        ...pullRequest,
+        checks: [
+          { name: "build", status: "success", url: null },
+          { name: "unit", status: "failure", url: null },
+          { name: "lint", status: "failure", url: null },
+          { name: "integration", status: "pending", url: null },
+          { name: "optional", status: "skipped", url: null },
+          { name: "superseded", status: "cancelled", url: null },
+        ],
+      },
+    };
+    await board.refresh();
+    expect(snapshot().cards[0].changeRequest?.checkCounts).toEqual({
+      success: 1,
+      failure: 2,
+      pending: 1,
+      skipped: 1,
+      cancelled: 1,
+    });
+    inventory.workspaces[0].githubRuntime = {
+      pullRequest: {
+        ...pullRequest,
+        checks: [{ name: "unit", status: "success", url: null }],
+      },
+    };
+    await board.refresh();
+    expect(snapshot().cards[0].changeRequest?.checkCounts).toEqual({
+      success: 1,
+      failure: 0,
+      pending: 0,
+      skipped: 0,
+      cancelled: 0,
+    });
+    inventory.workspaces[0].githubRuntime = {
+      pullRequest: { ...pullRequest, checks: [] },
+    };
+    await board.refresh();
+    expect(snapshot().cards[0].changeRequest).toMatchObject({
+      checkCounts: null,
+      checksStatus: "pending",
+    });
     linked.githubRuntime.pullRequest.isMerged = true;
     await board.refresh();
     expect(snapshot().cards[0]).toMatchObject({

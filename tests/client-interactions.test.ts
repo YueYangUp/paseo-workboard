@@ -144,7 +144,7 @@ import { QuickCreate } from "../client/QuickCreate";
 import { useDragHandle } from "../client/drag-handle";
 import { ConfirmationModal } from "../client/ConfirmationModal";
 import { Modal } from "@getpaseo/plugin/client/react-native";
-import { Text } from "react-native";
+import { Text, View } from "react-native";
 import { HintProvider, HintButton } from "../client/Hint";
 
 const theme = {
@@ -2630,6 +2630,8 @@ it("L06 compact row keeps request warnings singular and activity metadata on one
         element.type === Text && text(element) === t.changeRequestUnavailable,
     ).length;
   expect(warningCount()).toBe(1);
+  expect(text(tree)).toContain(t.checks.failure);
+  expect(text(tree)).toContain(t.reviews.changes_requested);
 
   const activity = find(tree, (element) => {
     const style = flattenStyle(element.props.style);
@@ -2655,6 +2657,149 @@ it("L06 compact row keeps request warnings singular and activity metadata on one
   expect(byLabel(tree, t.checks.failure)).toBeDefined();
   expect(byLabel(tree, t.reviews.changes_requested)).toBeDefined();
   expect(warningCount()).toBe(1);
+});
+
+it.each([
+  ["card", false, "zh", "approved", "评审通过"],
+  ["row", false, "en", "changes_requested", "Changes requested"],
+  ["row", true, "zh", "pending", "待评审"],
+] as const)(
+  "shows visible CI counts and review text in %s (compact %s, %s), including with details open",
+  (presentation, compact, locale, reviewDecision, reviewText) => {
+    const checksText =
+      locale === "zh"
+        ? "CI 1成功 2失败 1进行中 1跳过 1已取消"
+        : "CI 1 passed 2 failed 1 pending 1 skipped 1 cancelled";
+    const value: Card = {
+      ...card("one", "review", "w"),
+      changeRequest: {
+        forge: "github",
+        number: 42,
+        url: "https://example.com/pr/42",
+        title: "Fix sync",
+        state: "open",
+        checksStatus: "failure",
+        checkCounts: {
+          success: 1,
+          failure: 2,
+          pending: 1,
+          skipped: 1,
+          cancelled: 1,
+        },
+        reviewDecision,
+      },
+    };
+    const task = taskComponent(value, {
+      presentation,
+      compact,
+      t: strings(locale),
+    });
+    const assertSummary = (tree: ReactNode) => {
+      const visibleText = text(tree);
+      for (const label of [checksText, reviewText]) {
+        expect(visibleText.split(label)).toHaveLength(2);
+        const visible = elements(tree).filter(
+          (e) => e.type === Text && text(e) === label,
+        );
+        expect(visible).toHaveLength(1);
+        expect(visible[0].props.numberOfLines).toBeUndefined();
+        const control = byLabel(tree, label);
+        expect(control.props.hint).toBe(label);
+        expect(flattenStyle(control.props.style)).toMatchObject({
+          minWidth: 36,
+          minHeight: 36,
+        });
+        const iconContainer = find(
+          control,
+          (element) =>
+            element.type === View && element.props.children?.props?.size === 14,
+        );
+        expect(flattenStyle(iconContainer.props.style)).toMatchObject({
+          width: 14,
+          height: 14,
+          flexShrink: 0,
+        });
+      }
+      expect(visibleText).not.toContain(strings(locale).checks.failure);
+    };
+    assertSummary(task.render());
+    byLabel(task.render(), strings(locale).details).props.onPress();
+    assertSummary(task.render());
+    expect(text(task.render())).toContain("Fix sync");
+  },
+);
+
+it.each([
+  ["card", false, "en"],
+  ["row", false, "zh"],
+  ["row", true, "en"],
+] as const)(
+  "shows aggregate CI and review warnings once in %s (compact %s, %s), preserving other warnings",
+  (presentation, compact, locale) => {
+    const localized = strings(locale);
+    const value: Card = {
+      ...card("one", "done", "w"),
+      activity: "waiting",
+      issue: "git-dirty",
+      dueAt: "2026-01-01T00:00:00Z",
+      changeRequest: {
+        forge: "github",
+        number: 42,
+        url: "https://example.com/pr/42",
+        title: "Fix sync",
+        state: "open",
+        checksStatus: "failure",
+        reviewDecision: "changes_requested",
+      },
+    };
+    const task = taskComponent(value, { presentation, compact, t: localized });
+    for (const expanded of [false, true]) {
+      if (expanded) byLabel(task.render(), localized.details).props.onPress();
+      const visibleText = text(task.render());
+      for (const label of [
+        localized.checks.failure,
+        localized.reviews.changes_requested,
+      ])
+        expect(visibleText.split(label)).toHaveLength(2);
+      expect(visibleText).toContain(localized.issues["git-dirty"]);
+      expect(visibleText).toContain(localized.overdue);
+      if (presentation === "row" || expanded)
+        expect(visibleText).toContain(localized.attentionActivity.waiting);
+    }
+  },
+);
+
+it("omits zero CI categories, falls back to aggregate text and hides absent CI and review data", () => {
+  const value = card("one", "review", "w");
+  value.changeRequest = {
+    forge: "github",
+    number: 42,
+    url: "https://example.com/pr/42",
+    title: "Fix sync",
+    state: "open",
+    checksStatus: "none",
+    reviewDecision: null,
+    checkCounts: {
+      success: 1,
+      failure: 0,
+      pending: 0,
+      skipped: 0,
+      cancelled: 0,
+    },
+  };
+  expect(text(taskComponent(value).render())).toContain("CI 1成功");
+  expect(text(taskComponent(value).render())).not.toMatch(
+    /0成功|0失败|0进行中|0跳过|0已取消/,
+  );
+  value.changeRequest.checkCounts = null;
+  for (const status of ["success", "failure", "pending"] as const) {
+    value.changeRequest.checksStatus = status;
+    expect(text(taskComponent(value).render())).toContain(t.checks[status]);
+  }
+  for (const status of ["none", null] as const) {
+    value.changeRequest.checksStatus = status;
+    expect(text(taskComponent(value).render())).not.toMatch(/CI|评审|修改/);
+  }
 });
 
 it("shows No Agents instead of unverified time for agentless bound workspaces", () => {

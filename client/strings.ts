@@ -139,6 +139,13 @@ const zh = {
     unknown: "状态未知",
   },
   checks: { pending: "CI 进行中", success: "CI 通过", failure: "CI 失败" },
+  checkCounts: {
+    success: "{count}成功",
+    failure: "{count}失败",
+    pending: "{count}进行中",
+    skipped: "{count}跳过",
+    cancelled: "{count}已取消",
+  },
   reviews: {
     approved: "评审通过",
     changes_requested: "需要修改",
@@ -606,6 +613,13 @@ const en: typeof zh = {
     unknown: "Unknown state",
   },
   checks: { pending: "CI pending", success: "CI passed", failure: "CI failed" },
+  checkCounts: {
+    success: "{count} passed",
+    failure: "{count} failed",
+    pending: "{count} pending",
+    skipped: "{count} skipped",
+    cancelled: "{count} cancelled",
+  },
   reviews: {
     approved: "Approved",
     changes_requested: "Changes requested",

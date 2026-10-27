@@ -553,6 +553,15 @@ export const cardSchema = taskSchema.extend({
       checksStatus: z
         .enum(["none", "pending", "success", "failure"])
         .nullable(),
+      checkCounts: z
+        .object({
+          success: z.number().int().nonnegative(),
+          failure: z.number().int().nonnegative(),
+          pending: z.number().int().nonnegative(),
+          skipped: z.number().int().nonnegative(),
+          cancelled: z.number().int().nonnegative(),
+        })
+        .nullish(),
       reviewDecision: z
         .enum(["approved", "changes_requested", "pending"])
         .nullable(),

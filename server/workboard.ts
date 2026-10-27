@@ -147,6 +147,11 @@ function projectChangeRequest(workspace?: Workspace): Card["changeRequest"] {
   const runtime = workspace?.githubRuntime;
   const request = runtime?.pullRequest;
   if (!request) return null;
+  const checks = request.checks ?? [];
+  const checkCounts = checks.length
+    ? { success: 0, failure: 0, pending: 0, skipped: 0, cancelled: 0 }
+    : null;
+  if (checkCounts) for (const check of checks) checkCounts[check.status]++;
   const nativeState = request.state.toLowerCase();
   const state =
     request.isMerged || nativeState === "merged"
@@ -165,6 +170,7 @@ function projectChangeRequest(workspace?: Workspace): Card["changeRequest"] {
     title: request.title,
     state,
     checksStatus: request.checksStatus ?? null,
+    checkCounts,
     reviewDecision: request.reviewDecision ?? null,
   };
 }
