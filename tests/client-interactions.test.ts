@@ -447,6 +447,98 @@ it("X-12 reports unavailable navigation instead of silently ignoring a workspace
   );
 });
 
+it("opens the chosen Agent on the board's host without changing task data", () => {
+  const value = {
+    ...card("one", "review", "workspace-one"),
+    agents: [
+      {
+        id: "first",
+        title: "First conversation",
+        activity: "idle",
+        archived: false,
+      },
+      {
+        id: "second",
+        title: "Unread conversation",
+        activity: "attention",
+        archived: false,
+      },
+    ],
+  } as Card;
+  runtime.query.data = board([value]);
+  const openAgent = vi.fn(),
+    openWorkspace = vi.fn();
+  const screen = host("board", { openAgent, openWorkspace });
+  const view = named(screen.render(), "BoardView");
+  const item = view.props.renderCard(view.props.cards[0]);
+  item.props.onOpenAgent("second");
+  expect(openAgent).toHaveBeenCalledExactlyOnceWith({
+    agentId: "second",
+    serverId: "host",
+  });
+  expect(openWorkspace).not.toHaveBeenCalled();
+  expect(runtime.mutation).not.toHaveBeenCalled();
+  const oldHost = host("board", { openWorkspace });
+  const oldView = named(oldHost.render(), "BoardView");
+  expect(
+    oldView.props.renderCard(oldView.props.cards[0]).props.onOpenAgent,
+  ).toBeUndefined();
+});
+
+it.each(["card", "row"])(
+  "lets each expanded Agent row open its own conversation in %s presentation",
+  (presentation) => {
+    const value = {
+      ...card("one", "review", "w"),
+      agents: [
+        {
+          id: "first",
+          title: "First conversation",
+          activity: "idle",
+          archived: false,
+        },
+        {
+          id: "second",
+          title: "Unread conversation",
+          activity: "attention",
+          archived: false,
+        },
+      ],
+    } as Card;
+    const onOpenAgent = vi.fn(),
+      onOpen = vi.fn();
+    const item = taskComponent(value, {
+      presentation,
+      onOpenAgent,
+      onOpen,
+      disabled: true,
+      pending: true,
+    });
+    byLabel(item.render(), t.details).props.onPress();
+    for (const agent of value.agents) {
+      const link = byID(item.render(), `workboard-open-agent-${agent.id}`);
+      expect(link.props.accessibilityRole).toBe("button");
+      expect(link.props.accessibilityLabel).toBe(
+        `${t.openAgent}: ${agent.title}`,
+      );
+      expect(flattenStyle(link.props.style).minHeight).toBeGreaterThanOrEqual(
+        36,
+      );
+      link.props.onPress();
+      expect(onOpenAgent).toHaveBeenLastCalledWith(agent.id);
+    }
+    expect(onOpen).not.toHaveBeenCalled();
+    const fallback = taskComponent(value, { presentation });
+    byLabel(fallback.render(), t.details).props.onPress();
+    expect(text(fallback.render())).toContain("Unread conversation");
+    expect(
+      elements(fallback.render()).filter(
+        (e) => e.props.testID === "workboard-open-agent-second",
+      ),
+    ).toHaveLength(0);
+  },
+);
+
 it.each([false, true])(
   "X-12 exposes title behavior and hover underline for draft=%s",
   (draft) => {
