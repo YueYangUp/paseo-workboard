@@ -62,14 +62,22 @@ export const PRIORITY_LABELS: Record<Priority, string> = {
   normal: "priority:normal",
   low: "priority:low",
 };
-export function priorityLabels(labels: readonly string[]): string[] {
+export function priorityLabels(
+  labels: readonly string[],
+  statusNames: readonly string[] = [],
+): string[] {
   const managed = new Set(Object.values(PRIORITY_LABELS).map(labelKey));
+  // Existing status configurations retain ownership of their labels after upgrade.
+  for (const name of statusNames) managed.delete(labelKey(name));
   return [
     ...new Set(labels.filter((name) => managed.has(labelKey(name)))),
   ].sort();
 }
-export function resolvePriority(labels: readonly string[]): Priority {
-  const present = new Set(labels.map(labelKey));
+export function resolvePriority(
+  labels: readonly string[],
+  statusNames: readonly string[] = [],
+): Priority {
+  const present = new Set(priorityLabels(labels, statusNames).map(labelKey));
   return (
     PRIORITIES.find((priority) =>
       present.has(labelKey(PRIORITY_LABELS[priority])),
