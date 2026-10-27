@@ -4,6 +4,293 @@ import { Workboard } from "../server/workboard";
 import { taskSections } from "../client/project-groups";
 import { mutationSchema } from "../shared/rpc";
 import { loadViewPreferencesFrom } from "../client/view-preferences";
+import { attentionReasons, visibleCards } from "../client/board-utils";
+import { newTask, priorityLabels, settingsSchema } from "../shared/model";
+import { migrateData } from "../shared/migrations";
+
+it("keeps legacy priority-named status groups usable and allows incremental repair", async () => {
+  const settings = structuredClone(
+    settingsSchema.parse({ archiveDoneEnabled: true }),
+  );
+  settings.groups.find((g) => g.id === "in-progress")!.label = "priority:high";
+  settings.groups.find((g) => g.id === "review")!.label = "priority:low";
+  const f = fixture(migrateData({ schemaVersion: 10, settings }, 10));
+  f.inventory.workspaces.push(
+    workspace("legacy", "Legacy", ["priority:high", "keep"]),
+  );
+  await f.board.start();
+  try {
+    let b = f.board.snapshot();
+    expect(b.cards[0].stage).toBe("in-progress");
+    const save = async (next: typeof settings) => {
+      b = await f.board.mutate({
+        action: "settings",
+        revision: b.revision,
+        expectedSettings: b.settings,
+        settings: next,
+      });
+    };
+    await save({ ...b.settings, archiveDoneEnabled: false });
+    expect(b.settings.archiveDoneEnabled).toBe(false);
+    expect(b.cards[0].priority ?? "normal").toBe("normal");
+    const groups = b.settings.groups.map((g) =>
+      g.id === "review" ? { ...g, label: "task:review" } : g,
+    );
+    await save({ ...b.settings, groups });
+    expect(b.settings.groups.find((g) => g.id === "in-progress")!.label).toBe(
+      "priority:high",
+    );
+    await save({
+      ...b.settings,
+      groups: b.settings.groups.map((g) =>
+        g.id === "in-progress" ? { ...g, label: "task:in-progress" } : g,
+      ),
+    });
+    await expect(
+      save({
+        ...b.settings,
+        groups: b.settings.groups.map((g) =>
+          g.id === "review" ? { ...g, label: "priority:low" } : g,
+        ),
+      }),
+    ).rejects.toThrow("Priority labels are reserved");
+    expect(f.inventory.workspaces[0].labels).toEqual(["priority:high", "keep"]);
+  } finally {
+    f.board.dispose();
+  }
+});
+
+it.each([undefined, "normal", "low"] as const)(
+  "binds a %s draft without touching priority-named status labels",
+  async (priority) => {
+    const settings = structuredClone(settingsSchema.parse({}));
+    settings.groups.find((g) => g.id === "in-progress")!.label =
+      "priority:high";
+    const f = fixture({
+      settings,
+      tasks: [
+        { ...newTask("draft", "Draft", "2026-09-01T00:00:00Z"), priority },
+      ],
+    });
+    await f.board.start();
+    try {
+      const b = await f.board.mutate({
+        action: "start",
+        taskId: "draft",
+        target: {
+          kind: "new",
+          source: { kind: "directory", path: "/fixture" },
+        },
+      });
+      expect(b.cards[0]).toMatchObject({ stage: "in-progress", binding: null });
+      expect(b.cards[0].priority ?? "normal").toBe(priority ?? "normal");
+      expect(f.inventory.workspaces[0].labels).toEqual(
+        priority === "low"
+          ? ["priority:high", "priority:low"]
+          : ["priority:high"],
+      );
+      const c = b.cards[0];
+      await f.board.mutate({
+        action: "priority",
+        taskId: c.id,
+        updatedAt: c.updatedAt,
+        priority: "normal",
+        expectedLabels: priority === "low" ? ["priority:low"] : [],
+      });
+      expect(f.inventory.workspaces[0].labels).toEqual(["priority:high"]);
+    } finally {
+      f.board.dispose();
+    }
+  },
+);
+
+it("rejects unavailable priority before persisting a binding or creating a workspace, then binds after repair", async () => {
+  const settings = structuredClone(settingsSchema.parse({}));
+  settings.groups.find((g) => g.id === "review")!.label = "priority:high";
+  const f = fixture({
+    settings,
+    tasks: [
+      {
+        ...newTask("draft", "Draft", "2026-09-01T00:00:00Z"),
+        priority: "high",
+      },
+    ],
+  });
+  await f.board.start();
+  try {
+    const input = {
+      action: "start" as const,
+      taskId: "draft",
+      target: {
+        kind: "new" as const,
+        source: { kind: "directory" as const, path: "/fixture" },
+      },
+    };
+    await expect(f.board.mutate(input)).rejects.toThrow(
+      "Priority label is used by a status group",
+    );
+    expect(f.host.create).not.toHaveBeenCalled();
+    expect(f.host.setLabel).not.toHaveBeenCalled();
+    expect(f.store.current.tasks[0]).toMatchObject({
+      binding: null,
+      workspaceId: null,
+      priority: "high",
+    });
+    let b = f.board.snapshot();
+    await f.board.mutate({
+      action: "settings",
+      revision: b.revision,
+      expectedSettings: b.settings,
+      settings: {
+        ...b.settings,
+        groups: b.settings.groups.map((g) =>
+          g.id === "review" ? { ...g, label: "task:review" } : g,
+        ),
+      },
+    });
+    b = await f.board.mutate(input);
+    expect(b.cards[0]).toMatchObject({ binding: null, priority: "high" });
+    expect(f.host.create).toHaveBeenCalledTimes(1);
+  } finally {
+    f.board.dispose();
+  }
+});
+
+it("includes a priority-only conflict in Needs attention and excludes status-owned priority names", async () => {
+  const f = fixture();
+  f.inventory.workspaces.push(
+    workspace("conflict", "Conflict", [
+      "task:todo",
+      "priority:high",
+      "priority:low",
+    ]),
+  );
+  await f.board.start();
+  try {
+    const b = f.board.snapshot();
+    expect(b.cards[0].issue).toBeNull();
+    expect(attentionReasons(b.cards[0])).toEqual(["priority-labels-conflict"]);
+    expect(visibleCards(b, "all", "", true).map((c) => c.id)).toEqual([
+      b.cards[0].id,
+    ]);
+    expect(
+      attentionReasons({
+        ...b.cards[0],
+        managedLabels: ["task:todo", "priority:high"],
+      }),
+    ).toEqual([]);
+  } finally {
+    f.board.dispose();
+  }
+});
+
+it("keeps conflict-only projects out of lanes and counts only presented cards in mixed projects", async () => {
+  const f = fixture({
+    settings: settingsSchema.parse({ exclusiveStatusLabels: false }),
+  });
+  f.inventory.workspaces.push(
+    {
+      ...workspace("conflict-only", "Conflict", ["task:todo", "task:review"]),
+      projectId: "only",
+    },
+    {
+      ...workspace("mixed-conflict", "Conflict", ["task:todo", "task:review"]),
+      projectId: "mixed",
+    },
+    { ...workspace("normal", "Normal", ["task:todo"]), projectId: "mixed" },
+  );
+  await f.board.start();
+  try {
+    const b = f.board.snapshot();
+    const input = {
+      cards: b.cards,
+      fullCards: b.cards,
+      groups: b.settings.groups,
+      cardOrderByStage: b.cardOrderByStage,
+      projects: b.projects,
+      unassigned: "None",
+    };
+    const sections = taskSections(input);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({ id: "project:id:mixed", total: 1 });
+    expect(sections[0].cards.map((c) => c.workspaceId)).toEqual(["normal"]);
+    expect(
+      taskSections({
+        ...input,
+        cards: b.cards.filter((c) => c.stage === "conflict"),
+      }),
+    ).toEqual([]);
+    expect(b.cards.filter((c) => c.stage === "conflict")).toHaveLength(2);
+  } finally {
+    f.board.dispose();
+  }
+});
+
+it.each(["remove-fails", "response-lost"])(
+  "recovers from partially applied priority labels: %s",
+  async (failure) => {
+    const f = fixture();
+    f.inventory.workspaces.push(
+      workspace("w", "Workspace", ["task:todo", "keep", "priority:low"]),
+    );
+    await f.board.start();
+    try {
+      const original = f.board.snapshot().cards[0];
+      const originalTask = structuredClone(f.store.current.tasks[0]);
+      const real = f.host.setLabel;
+      f.host.setLabel = async (id, name, color, assigned) => {
+        if (failure === "remove-fails" && !assigned)
+          throw new Error("remove failed");
+        const labels = await real(id, name, color, assigned);
+        if (failure === "response-lost") throw new Error("response lost");
+        return labels;
+      };
+      const input = {
+        action: "priority" as const,
+        taskId: original.id,
+        updatedAt: original.updatedAt,
+        priority: "high" as const,
+        expectedLabels: ["priority:low"],
+      };
+      await expect(f.board.mutate(input)).rejects.toThrow(
+        failure === "remove-fails" ? "remove failed" : "response lost",
+      );
+      expect(f.inventory.workspaces[0].labels).toEqual([
+        "task:todo",
+        "keep",
+        "priority:low",
+        "priority:high",
+      ]);
+      expect(f.store.current.tasks[0]).toEqual(originalTask);
+      f.host.setLabel = real;
+      await expect(f.board.mutate(input)).rejects.toThrow(
+        "priority labels changed",
+      );
+      await f.board.refresh();
+      const refreshed = f.board.snapshot().cards[0];
+      expect(refreshed.priority).toBe("high");
+      expect(attentionReasons(refreshed)).toContain("priority-labels-conflict");
+      await expect(f.board.mutate(input)).rejects.toThrow("Task changed");
+      const result = await f.board.mutate({
+        ...input,
+        updatedAt: refreshed.updatedAt,
+        expectedLabels: priorityLabels(refreshed.labels),
+        priority: "high",
+      });
+      expect(result.cards[0].priority).toBe("high");
+      expect(f.inventory.workspaces[0].labels).toEqual([
+        "task:todo",
+        "keep",
+        "priority:high",
+      ]);
+      expect(attentionReasons(result.cards[0])).not.toContain(
+        "priority-labels-conflict",
+      );
+    } finally {
+      f.board.dispose();
+    }
+  },
+);
 
 it("persists priority across refresh and reload, rejects stale edits, and updates only native priority labels", async () => {
   const f = fixture();
