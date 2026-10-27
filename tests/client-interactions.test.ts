@@ -980,6 +980,143 @@ it("X-01 locks the submitting draft form while unrelated board controls stay act
   await Promise.resolve();
 });
 
+function openTaskModal(task?: Card) {
+  runtime.query.data = board(task ? [task] : []);
+  runtime.query.data.projects = [
+    { id: "alpha", name: "Alpha", directory: "/example/alpha", isGit: true },
+    { id: "beta", name: "Beta", directory: "/example/beta", isGit: true },
+  ];
+  const screen = host();
+  const tree = screen.render();
+  if (task) {
+    const view = named(tree, "BoardView");
+    view.props.renderCard(view.props.cards[0]).props.onEdit();
+  } else {
+    find(tree, (e) => e.props.onPress && text(e) === t.addTask).props.onPress();
+  }
+  const element = named(screen.render(), "TaskModal");
+  const modal = mount(element.type, element.props);
+  modal.render();
+  return modal;
+}
+
+function taskProjectChoices(tree: ReactNode) {
+  return find(tree, (e) => e.props.horizontal === true);
+}
+
+it("TaskModal project choices show only the bound task's current project and disable changes", () => {
+  const modal = openTaskModal({
+    ...card("bound", "todo", "workspace"),
+    projectId: "alpha",
+    projectName: "Old Alpha name",
+  });
+  const choices = taskProjectChoices(modal.render());
+  expect(
+    elements(choices)
+      .filter((e) => e.type === Text)
+      .map(text),
+  ).toEqual(["Alpha"]);
+  const buttons = elements(choices).filter(
+    (e) => e.props.accessibilityRole === "button",
+  );
+  expect(buttons).toHaveLength(1);
+  expect(buttons[0].props.disabled).toBe(true);
+  expect(buttons[0].props["aria-pressed"]).toBe(true);
+});
+
+it.each([
+  {
+    scenario: "a missing project with a stored name",
+    projectId: "missing",
+    projectName: "Stored project",
+    label: "Stored project",
+  },
+  {
+    scenario: "a missing project without a stored name",
+    projectId: "missing",
+    projectName: "",
+    label: t.unassigned,
+  },
+  {
+    scenario: "no project assignment",
+    projectId: null,
+    projectName: "",
+    label: t.unassigned,
+  },
+])(
+  "TaskModal project choices show a read-only fallback for $scenario",
+  ({ projectId, projectName, label }) => {
+    const modal = openTaskModal({
+      ...card("bound", "todo", "workspace"),
+      projectId,
+      projectName,
+    });
+    const choices = taskProjectChoices(modal.render());
+    expect(
+      elements(choices)
+        .filter((e) => e.type === Text)
+        .map(text),
+    ).toEqual([label]);
+    expect(
+      elements(choices).filter((e) => e.props.accessibilityRole === "button"),
+    ).toHaveLength(0);
+  },
+);
+
+it.each(["new", "existing"])(
+  "TaskModal project choices let %s unbound drafts select and clear their project",
+  (kind) => {
+    const modal = openTaskModal(
+      kind === "existing"
+        ? { ...card("draft"), projectId: "beta", projectName: "Beta" }
+        : undefined,
+    );
+    const saved = vi.fn();
+    modal.props = { ...modal.props, onSave: saved };
+    const choices = () =>
+      elements(taskProjectChoices(modal.render())).filter(
+        (e) => e.props.accessibilityRole === "button",
+      );
+    const selected = () =>
+      choices()
+        .filter((e) => e.props["aria-pressed"])
+        .map(text);
+    const save = () =>
+      find(
+        modal.render(),
+        (e) =>
+          e.props.onPress && text(e) === (kind === "new" ? t.create : t.update),
+      );
+    expect(choices().map(text)).toEqual([t.unassigned, "Alpha", "Beta"]);
+    expect(choices().every((e) => e.props.disabled === false)).toBe(true);
+    expect(selected()).toEqual([kind === "new" ? t.unassigned : "Beta"]);
+    byLabel(modal.render(), t.titleField).props.onChangeText("Draft title");
+
+    choices()
+      .find((e) => text(e) === "Alpha")!
+      .props.onPress();
+    expect(selected()).toEqual(["Alpha"]);
+    expect(save().props.disabled).toBe(false);
+    save().props.onPress();
+    expect(saved).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Draft title", projectId: "alpha" }),
+    );
+
+    choices()
+      .find((e) => text(e) === t.unassigned)!
+      .props.onPress();
+    expect(selected()).toEqual([t.unassigned]);
+    save().props.onPress();
+    expect(saved).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Draft title", projectId: null }),
+    );
+    expect(saved).toHaveBeenCalledTimes(2);
+
+    modal.props = { ...modal.props, disabled: true };
+    expect(choices().every((e) => e.props.disabled === true)).toBe(true);
+  },
+);
+
 function flattenStyle(style: any): any {
   return Array.isArray(style)
     ? Object.assign({}, ...style.map(flattenStyle))

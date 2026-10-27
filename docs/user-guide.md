@@ -20,6 +20,10 @@ Start work by creating a new workspace or attaching an existing one. A new works
 
 After a binding fails, retry its original intent or choose **Cancel binding** on the card. Executing or queued bindings cannot be canceled. Cancellation clears only the pending plugin intent and keeps any created or linked workspace. A draft without a workspace can start again; a linked task can change groups.
 
+### Edit a task
+
+When creating or editing an unbound draft, select a project or choose **Unassigned** to clear it. For a workspace-bound task, the editor shows only that task's project; it cannot be changed here. If the project is missing from the project list, the editor shows the stored project name, or **Unassigned** when no name is stored.
+
 ### Change status
 
 Each group has a managed workspace label. In the default mapping, those labels are:
