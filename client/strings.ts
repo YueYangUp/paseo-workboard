@@ -94,6 +94,7 @@ const zh = {
     attention: "Agent 有未读回复",
   },
   openWorkspace: "打开 workspace",
+  openAgent: "打开会话",
   pinAutomatic: "Paseo 侧边栏：由 Workboard 自动置顶。离开进行中分组后取消。",
   pinManual: "Paseo 侧边栏：已有或手动置顶，Workboard 不会自动取消。",
   archive: "归档",
@@ -557,6 +558,7 @@ const en: typeof zh = {
     attention: "An agent has an unread reply",
   },
   openWorkspace: "Open workspace",
+  openAgent: "Open conversation",
   pinAutomatic:
     "Paseo sidebar: automatically pinned by Workboard. Leaving In progress removes this pin.",
   pinManual:

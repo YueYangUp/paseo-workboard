@@ -56,6 +56,7 @@ export function TaskItem({
   disabled,
   pending,
   onOpen,
+  onOpenAgent,
   onEdit,
   onStart,
   onStatus,
@@ -75,6 +76,7 @@ export function TaskItem({
   disabled: boolean;
   pending: boolean;
   onOpen(): void;
+  onOpenAgent?(agentId: string): void;
   onEdit(): void;
   onStart(): void;
   onStatus(): void;
@@ -493,14 +495,38 @@ export function TaskItem({
         </Text>
       )}
       {agentsOpen &&
-        card.agents.map((agent) => (
-          <Text
-            key={agent.id}
-            style={{ color: activityColor(agent.activity, theme) }}
-          >
-            • {agent.title} · {t.activity[agent.activity]}
-          </Text>
-        ))}
+        card.agents.map((agent) =>
+          onOpenAgent ? (
+            <CardAction
+              key={agent.id}
+              theme={theme}
+              hint={t.openAgent}
+              accessibilityRole="button"
+              accessibilityLabel={`${t.openAgent}: ${agent.title}`}
+              testID={`workboard-open-agent-${agent.id}`}
+              onPress={() => onOpenAgent(agent.id)}
+              style={styles.agentLink}
+            >
+              <Text
+                style={{ flex: 1, color: activityColor(agent.activity, theme) }}
+              >
+                • {agent.title} · {t.activity[agent.activity]}
+              </Text>
+              <Icon
+                name="ArrowUpRight"
+                size={13}
+                color={theme.colors.foregroundMuted}
+              />
+            </CardAction>
+          ) : (
+            <Text
+              key={agent.id}
+              style={{ color: activityColor(agent.activity, theme) }}
+            >
+              • {agent.title} · {t.activity[agent.activity]}
+            </Text>
+          ),
+        )}
     </>
   );
   if (presentation === "row") {
@@ -1021,6 +1047,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   cardTitlePressable: { flex: 1, minWidth: 0 },
+  agentLink: {
+    minHeight: 36,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   cardPriorityRow: {
     flexDirection: "row",
     alignItems: "center",
