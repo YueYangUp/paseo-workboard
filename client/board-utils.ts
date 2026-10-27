@@ -25,6 +25,7 @@ import {
 const attentionIssues = new Set([
   "labels-conflict",
   "label-sync-incomplete",
+  "priority-sync-uncertain",
   "native-archive-unknown",
   "conversation-unknown",
   "terminal-open",
@@ -61,6 +62,7 @@ export function attentionReasons(card: Card): string[] {
   const reasons: string[] = [];
   if (["waiting", "error", "attention"].includes(card.activity))
     reasons.push(card.activity);
+  if (card.priorityWrite) reasons.push("priority-sync-uncertain");
   if (card.stage === "conflict") reasons.push("labels-conflict");
   if (priorityLabels(card.labels, card.managedLabels).length > 1)
     reasons.push("priority-labels-conflict");

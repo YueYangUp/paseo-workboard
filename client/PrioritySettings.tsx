@@ -11,6 +11,7 @@ import {
   DEFAULT_PRIORITY_STYLES,
   GROUP_COLORS,
   PRIORITIES,
+  PRIORITY_LABELS,
   priorityStyleSchema,
   type GroupColor,
   type Priority,
@@ -51,7 +52,7 @@ export function PrioritySettings({
           <Pressable
             key={priority}
             accessibilityRole="button"
-            accessibilityLabel={`${t.edit}: ${styles[priority].name ?? t.priorities[priority]}`}
+            accessibilityLabel={`${t.edit}: ${PRIORITY_LABELS[priority]}${styles[priority].name ? ` · ${styles[priority].name}` : ""}`}
             disabled={disabled}
             testID={`workboard-edit-priority-${priority}`}
             onPress={() => setEditing({ priority, styles, onChange })}
@@ -124,7 +125,7 @@ export function PriorityEditor({
   return (
     <Modal
       open
-      title={`${t.priority} · ${initialName}`}
+      title={`${t.priority} · ${PRIORITY_LABELS[priority]}${initial.name ? ` · ${initial.name}` : ""}`}
       onOpenChange={(open) => {
         if (!open && !saving) onClose();
       }}

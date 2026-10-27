@@ -249,9 +249,20 @@ export function BoardView(props: BoardViewProps) {
     }
     clearGesture();
   };
+  const prioritySignature = props.fullCards
+    .map((card) => `${card.id}:${card.priority ?? "p2"}`)
+    .join("\n");
+  const cancelKey = JSON.stringify([
+    disabled,
+    compact,
+    groupSignature,
+    props.filterKey,
+    props.priorityFirst,
+    prioritySignature,
+  ]);
   useEffect(() => {
     cancel();
-  }, [disabled, compact, groupSignature, props.filterKey, props.priorityFirst]);
+  }, [cancelKey]);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -824,6 +835,7 @@ export function BoardView(props: BoardViewProps) {
               return (
                 <BoardColumn
                   key={group.id}
+                  cancelKey={cancelKey}
                   group={group}
                   t={t}
                   theme={theme}
@@ -902,6 +914,7 @@ export function BoardView(props: BoardViewProps) {
                     ))}
                   {stageCards.map((card) => (
                     <TaskDragShell
+                      cancelKey={cancelKey}
                       key={card.id}
                       card={card}
                       onCardLayout={(top, height) => {
@@ -1073,6 +1086,7 @@ export function BoardView(props: BoardViewProps) {
                 theme={theme}
                 disabled={
                   disabled ||
+                  props.priorityFirst ||
                   props.orderPending?.has(selectedMenu.id) ||
                   !Object.hasOwn(props.cardOrderByStage, selectedMenu.id)
                 }

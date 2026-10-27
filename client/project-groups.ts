@@ -7,9 +7,9 @@ import {
 } from "../shared/model";
 
 export function sortPriorityCards(cards: readonly Card[]): Card[] {
-  const rank = { high: 0, normal: 1, low: 2 };
+  const rank = { p0: 0, p1: 1, p2: 2, p3: 3 };
   return [...cards].sort(
-    (a, b) => rank[a.priority ?? "normal"] - rank[b.priority ?? "normal"],
+    (a, b) => rank[a.priority ?? "p2"] - rank[b.priority ?? "p2"],
   );
 }
 

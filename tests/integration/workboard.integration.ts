@@ -182,34 +182,86 @@ describe.skipIf(offsetRun)("isolated Paseo workboard", () => {
     let card = (await readyBoard()).cards.find(
       (c) => c.workspaceId === workspaceId,
     )!;
-    expect(card.priority).toBe("low");
+    expect(card.priority).toBe("p3");
     const changed = await rpc<Board>("workboard.mutate", {
       action: "priority",
       taskId: card.id,
       updatedAt: card.updatedAt,
-      priority: "high",
+      priority: "p1",
       expectedLabels: ["priority:low"],
     });
-    expect(changed.cards.find((c) => c.id === card.id)?.priority).toBe("high");
+    expect(changed.cards.find((c) => c.id === card.id)?.priority).toBe("p1");
     const labels = (await client.fetchWorkspaces()).entries.find(
       (w) => w.id === workspaceId,
     )!.labels;
     expect([...(labels ?? [])].sort()).toEqual([
+      "P1",
       "keep:example",
-      "priority:high",
       "task:todo",
     ]);
     await client.setWorkspaceLabel({
       workspaceId,
-      label: { name: "priority:high", color: "red" },
+      label: { name: "P1", color: "red" },
       assigned: false,
     });
     await client.reloadPlugin(pluginId);
     card = (await readyBoard()).cards.find(
       (c) => c.workspaceId === workspaceId,
     )!;
-    expect(card.priority ?? "normal").toBe("normal");
+    expect(card.priority ?? "p2").toBe("p2");
     expect(card.stage).toBe("todo");
+  });
+  test("materializes explicit P2 and exclusively follows a unique external newcomer", async () => {
+    const directory = path.join(
+      home,
+      "integration-priority-p2",
+      String(Date.now()),
+    );
+    await mkdir(directory, { recursive: true });
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      title: "Default priority example",
+    });
+    const workspaceId = created.workspace!.id;
+    await client.reloadPlugin(pluginId);
+    let card = (await readyBoard()).cards.find(
+      (c) => c.workspaceId === workspaceId,
+    )!;
+    expect(card.priority ?? "p2").toBe("p2");
+    expect(
+      (await client.fetchWorkspaces()).entries.find((w) => w.id === workspaceId)
+        ?.labels ?? [],
+    ).toEqual([]);
+    await rpc<Board>("workboard.mutate", {
+      action: "priority",
+      taskId: card.id,
+      updatedAt: card.updatedAt,
+      priority: "p2",
+      expectedLabels: [],
+    });
+    expect(
+      (await client.fetchWorkspaces()).entries.find((w) => w.id === workspaceId)
+        ?.labels,
+    ).toEqual(["P2"]);
+    await client.reloadPlugin(pluginId);
+    await readyBoard();
+    await client.setWorkspaceLabel({
+      workspaceId,
+      label: { name: "P0", color: "red" },
+      assigned: true,
+    });
+    await eventually(
+      async () =>
+        (await client.fetchWorkspaces()).entries.find(
+          (w) => w.id === workspaceId,
+        )?.labels,
+      (labels) => JSON.stringify(labels) === '["P0"]',
+      "Unique external P0 should replace P2",
+    );
+    card = (await snapshot()).cards.find((c) => c.workspaceId === workspaceId)!;
+    expect(card.priority).toBe("p0");
+    expect(card.priorityWrite).toBeNull();
+    expect(card.stage).toBe("inbox");
   });
   test("persists custom groups, follows native labels and deletes only after tasks move out", async () => {
     const initial = await readyBoard();

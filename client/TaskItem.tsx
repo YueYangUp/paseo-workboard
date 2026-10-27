@@ -94,7 +94,6 @@ export function TaskItem({
     <PriorityPicker
       title={card.title}
       value={card.priority}
-      conflicted={priorityLabels(card.labels, card.managedLabels).length > 1}
       priorityStyles={board.settings.priorityStyles}
       onChange={onPriorityChange}
       disabled={
@@ -108,6 +107,23 @@ export function TaskItem({
   const [titleHovered, setTitleHovered] = useState(false);
   const toast = useToast();
   const request = card.changeRequest;
+  const checkStatus =
+    request?.checksStatus && request.checksStatus !== "none"
+      ? request.checksStatus
+      : null;
+  const checkCounts = request?.checkCounts;
+  const checkCountParts = checkCounts
+    ? (["success", "failure", "pending", "skipped", "cancelled"] as const)
+        .filter((status) => checkCounts[status] > 0)
+        .map((status) =>
+          t.checkCounts[status].replace("{count}", String(checkCounts[status])),
+        )
+    : [];
+  const checksText = checkCountParts.length
+    ? `CI ${checkCountParts.join(" ")}`
+    : checkStatus
+      ? t.checks[checkStatus]
+      : null;
   const requestLabel = request
     ? `${request.forge === "gitlab" ? "MR" : "PR"}${request.number === null ? "" : ` ${request.forge === "gitlab" ? "!" : "#"}${request.number}`}`
     : "";
@@ -150,13 +166,19 @@ export function TaskItem({
       priorityLabels([label]).length === 0,
   );
   const group = board.settings.groups.find((item) => item.id === card.stage);
-  const reasons = attentionReasons(card).map((reason) => {
-    if (reason === "waiting" || reason === "error" || reason === "attention")
-      return t.attentionActivity[reason];
-    if (reason === "checks-failure") return t.checks.failure;
-    if (reason === "changes-requested") return t.reviews.changes_requested;
-    return issueText(reason, t) ?? reason;
-  });
+  const reasons = attentionReasons(card)
+    .filter(
+      (reason) =>
+        (reason !== "checks-failure" || !checksText) &&
+        (reason !== "changes-requested" || !request?.reviewDecision),
+    )
+    .map((reason) => {
+      if (reason === "waiting" || reason === "error" || reason === "attention")
+        return t.attentionActivity[reason];
+      if (reason === "checks-failure") return t.checks.failure;
+      if (reason === "changes-requested") return t.reviews.changes_requested;
+      return issueText(reason, t) ?? reason;
+    });
   const pinHint = card.pinState === "automatic" ? t.pinAutomatic : t.pinManual;
   const requestSummary = (
     <>
@@ -185,18 +207,34 @@ export function TaskItem({
             </View>
           </ExternalLink>
           <View style={styles.requestStatuses}>
-            {request.checksStatus && request.checksStatus !== "none" && (
+            {checksText && (
               <HintButton
-                hint={t.checks[request.checksStatus]}
+                hint={checksText}
                 accessibilityRole="button"
-                accessibilityLabel={t.checks[request.checksStatus]}
+                accessibilityLabel={checksText}
                 style={styles.requestStatusAction}
               >
-                <Icon
-                  name={checksIcon(request.checksStatus)}
-                  size={14}
-                  color={checksColor(request.checksStatus, theme)}
-                />
+                {checkStatus && (
+                  <View style={styles.requestStatusIcon}>
+                    <Icon
+                      name={checksIcon(checkStatus)}
+                      size={14}
+                      color={checksColor(checkStatus, theme)}
+                    />
+                  </View>
+                )}
+                <Text
+                  style={[
+                    styles.requestStatusText,
+                    {
+                      color: checkStatus
+                        ? checksColor(checkStatus, theme)
+                        : theme.colors.foregroundMuted,
+                    },
+                  ]}
+                >
+                  {checksText}
+                </Text>
               </HintButton>
             )}
             {request.reviewDecision && (
@@ -206,11 +244,21 @@ export function TaskItem({
                 accessibilityLabel={t.reviews[request.reviewDecision]}
                 style={styles.requestStatusAction}
               >
-                <Icon
-                  name={reviewIcon(request.reviewDecision)}
-                  size={14}
-                  color={reviewColor(request.reviewDecision, theme)}
-                />
+                <View style={styles.requestStatusIcon}>
+                  <Icon
+                    name={reviewIcon(request.reviewDecision)}
+                    size={14}
+                    color={reviewColor(request.reviewDecision, theme)}
+                  />
+                </View>
+                <Text
+                  style={[
+                    styles.requestStatusText,
+                    { color: reviewColor(request.reviewDecision, theme) },
+                  ]}
+                >
+                  {t.reviews[request.reviewDecision]}
+                </Text>
               </HintButton>
             )}
           </View>
@@ -478,12 +526,6 @@ export function TaskItem({
             style={[styles.cardMeta, { color: theme.colors.foregroundMuted }]}
           >
             {t.changeRequestStates[request.state]}
-            {request.checksStatus && request.checksStatus !== "none"
-              ? ` · ${t.checks[request.checksStatus]}`
-              : ""}
-            {request.reviewDecision
-              ? ` · ${t.reviews[request.reviewDecision]}`
-              : ""}
           </Text>
         </>
       )}
@@ -675,7 +717,7 @@ export function TaskItem({
           </View>
         )}
         {compact && requestUnavailable}
-        {agentsOpen && compact && requestSummary}
+        {compact && requestSummary}
         {(issue || overdue || card.binding || reasons.length > 0) && (
           <Text
             numberOfLines={compact ? 2 : 1}
@@ -1066,10 +1108,16 @@ const styles = StyleSheet.create({
   cardMeta: { fontSize: 12, lineHeight: 16 },
   changeRequest: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: 12,
   },
-  requestLink: { flexDirection: "row", alignItems: "center", gap: 5 },
+  requestLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    minHeight: 36,
+  },
   requestTitle: {
     fontSize: 12,
     lineHeight: 16,
@@ -1077,14 +1125,23 @@ const styles = StyleSheet.create({
   },
   requestStatuses: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    flexShrink: 1,
+    maxWidth: "100%",
     columnGap: 6,
   },
   requestStatusAction: {
-    width: 36,
+    minWidth: 36,
     minHeight: 36,
+    maxWidth: "100%",
+    flexDirection: "row",
+    gap: 4,
+    paddingHorizontal: 4,
     alignItems: "center",
     justifyContent: "center",
   },
+  requestStatusText: { fontSize: 12, lineHeight: 16, flexShrink: 1 },
+  requestStatusIcon: { width: 14, height: 14, flexShrink: 0 },
   pinAction: {
     minWidth: 36,
     minHeight: 36,

@@ -344,6 +344,10 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
         disabled={writesDisabled}
         saving={groupsPending}
         pendingMutationIds={pendingMutationIds}
+        priorityFirst={viewPreferences.priorityFirst ?? true}
+        onPriorityFirstChange={(priorityFirst) =>
+          updateViewPreferences({ priorityFirst })
+        }
         mutate={mutate}
         onBack={
           props.initialPage === "settings" ? undefined : () => setPage("board")
@@ -674,24 +678,6 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
                 }
                 theme={props.theme}
               />
-              <ToolbarSelect
-                id="workboard-sort-menu"
-                title={t.sorting}
-                label={
-                  viewPreferences.priorityFirst
-                    ? t.priorityFirst
-                    : t.defaultSort
-                }
-                value={viewPreferences.priorityFirst ? "priority" : "default"}
-                options={[
-                  { value: "default", label: t.defaultSort },
-                  { value: "priority", label: t.priorityFirst },
-                ]}
-                onSelect={(sort) =>
-                  updateViewPreferences({ priorityFirst: sort === "priority" })
-                }
-                theme={props.theme}
-              />
             </View>
           )}
           <HintButton
@@ -970,9 +956,7 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
             : (projectId: string | null) =>
                 setDraft({ title: "", description: "", projectId })
         }
-        priorityFirst={
-          viewPreferences.mode === "board" && viewPreferences.priorityFirst
-        }
+        priorityFirst={viewPreferences.priorityFirst ?? true}
         collapsed={
           new Set(
             projectBoard
@@ -2401,6 +2385,8 @@ export function SettingsPage({
   disabled,
   saving,
   pendingMutationIds,
+  priorityFirst = true,
+  onPriorityFirstChange,
   mutate,
   onBack,
 }: {
@@ -2410,6 +2396,8 @@ export function SettingsPage({
   disabled: boolean;
   saving: boolean;
   pendingMutationIds?: ReadonlySet<string>;
+  priorityFirst?: boolean;
+  onPriorityFirstChange?(value: boolean): void;
   mutate(
     mutation: Mutation,
     pendingMutationId?: string,
@@ -2796,6 +2784,18 @@ export function SettingsPage({
                 );
               })}
             </View>
+          </SettingsSection>
+          <SettingsSection title={t.sorting}>
+            <SettingsCard>
+              <SettingsSwitch
+                label={t.priorityFirst}
+                hint={t.prioritySortHint}
+                value={priorityFirst}
+                onValueChange={(value) => onPriorityFirstChange?.(value)}
+                disabled={!onPriorityFirstChange}
+                testID="workboard-priority-sorting"
+              />
+            </SettingsCard>
           </SettingsSection>
           <PrioritySettings
             value={settings.priorityStyles}

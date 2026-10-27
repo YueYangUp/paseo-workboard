@@ -24,7 +24,7 @@ import {
   edgeScrollSpeed,
   moveCardToAnchor,
 } from "./board-utils";
-import type { BoardViewProps } from "./BoardView";
+import { displayCardsForStage, type BoardViewProps } from "./BoardView";
 import { type Bounds, useDragHandle } from "./drag-handle";
 import {
   cardAnchorAtY,
@@ -63,7 +63,7 @@ const CONTENT_PADDING = 12;
 const GROUP_GAP = 10;
 
 export function ListView(props: Props) {
-  const { cards, groups, collapsed, disabled, t, theme } = props;
+  const { groups, collapsed, disabled, t, theme } = props;
   const toast = useToast();
   const latest = useRef(props);
   latest.current = props;
@@ -102,7 +102,7 @@ export function ListView(props: Props) {
   const cardSignature = props.fullCards
     .map(
       (card) =>
-        `${card.id}:${card.stage}:${card.binding?.stage ?? ""}:${card.archived?.status ?? ""}`,
+        `${card.id}:${card.stage}:${card.priority ?? "p2"}:${card.binding?.stage ?? ""}:${card.archived?.status ?? ""}`,
     )
     .join("\n");
   const collapsedSignature = [...collapsed].sort().join("\n");
@@ -120,6 +120,7 @@ export function ListView(props: Props) {
     collapsedSignature,
     pendingSignature,
     props.compact,
+    props.priorityFirst,
   ]);
 
   const completeOrder = (stage: Stage) =>
@@ -236,7 +237,9 @@ export function ListView(props: Props) {
     const destination = groupAtY(y, current.order, bounds);
     setTarget(destination);
     setCardInsertion(
-      destination === current.card?.stage ? anchorAt(current, current.y) : null,
+      destination === current.card?.stage && !latest.current.priorityFirst
+        ? anchorAt(current, current.y)
+        : null,
     );
   };
   const begin = (
@@ -265,11 +268,9 @@ export function ListView(props: Props) {
       order: latest.current.groups.map((group) => group.id),
       expectedCardOrder: card ? completeOrder(card.stage) : [],
       visibleCardIds: card
-        ? cardsForStage(
-            latest.current.cards,
-            card.stage,
-            latest.current.cardOrderByStage,
-          ).map((item) => item.id)
+        ? displayCardsForStage(latest.current, card.stage).map(
+            (item) => item.id,
+          )
         : [],
       filterKey: latest.current.filterKey,
     };
@@ -279,11 +280,7 @@ export function ListView(props: Props) {
       Object.fromEntries(
         latest.current.groups.map((group) => [
           group.id,
-          cardsForStage(
-            latest.current.cards,
-            group.id,
-            latest.current.cardOrderByStage,
-          ),
+          displayCardsForStage(latest.current, group.id),
         ]),
       ),
     );
@@ -337,7 +334,8 @@ export function ListView(props: Props) {
       void liveProps.onStage(live, destination);
       return;
     }
-    if (liveProps.orderPending?.has(destination)) return;
+    if (liveProps.priorityFirst || liveProps.orderPending?.has(destination))
+      return;
     const anchor = anchorAt(current, y);
     if (!anchor) return;
     const next = moveCardToAnchor(
@@ -380,6 +378,7 @@ export function ListView(props: Props) {
     const live = current.fullCards.find((item) => item.id === card.id);
     if (
       current.disabled ||
+      current.priorityFirst ||
       !live ||
       live.stage !== card.stage ||
       current.pendingStages?.has(live.id) ||
@@ -388,11 +387,7 @@ export function ListView(props: Props) {
       live.archived
     )
       return;
-    const visible = cardsForStage(
-      current.cards,
-      live.stage,
-      current.cardOrderByStage,
-    );
+    const visible = displayCardsForStage(current, live.stage);
     const neighbor =
       visible[visible.findIndex((item) => item.id === card.id) + direction];
     if (!neighbor) return;
@@ -412,7 +407,9 @@ export function ListView(props: Props) {
   const dropHint =
     preview?.kind === "card" && target
       ? (target === preview.card!.stage
-          ? t.listDropToReorder
+          ? props.priorityFirst
+            ? t.dragCancelHint
+            : t.listDropToReorder
           : preview.card!.workspaceId === null && !isDraftGroup(target, groups)
             ? t.dropToStart
             : t.dropToGroup
@@ -462,8 +459,7 @@ export function ListView(props: Props) {
         >
           {groups.map((group) => {
             const visible =
-              held?.[group.id] ??
-              cardsForStage(cards, group.id, props.cardOrderByStage);
+              held?.[group.id] ?? displayCardsForStage(props, group.id);
             const total = cardsForStage(
               props.fullCards,
               group.id,
@@ -533,8 +529,10 @@ export function ListView(props: Props) {
                       cancelKey={cancelKey}
                       key={card.id}
                       card={card}
-                      canMoveUp={index > 0}
-                      canMoveDown={index < visible.length - 1}
+                      canMoveUp={!props.priorityFirst && index > 0}
+                      canMoveDown={
+                        !props.priorityFirst && index < visible.length - 1
+                      }
                       disabled={
                         disabled ||
                         !!props.pendingStages?.has(card.id) ||
@@ -653,6 +651,7 @@ export function ListView(props: Props) {
               label={t.resetCardOrder}
               disabled={
                 disabled ||
+                props.priorityFirst ||
                 !!props.orderPending?.has(selectedMenu.id) ||
                 !Object.hasOwn(props.cardOrderByStage, selectedMenu.id)
               }

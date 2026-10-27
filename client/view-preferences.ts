@@ -15,6 +15,7 @@ const storageKey = (host: string) => `paseo-workboard:view:${host}`;
 const defaults = (): ViewPreferences => ({
   mode: "board",
   collapsedListGroups: [],
+  priorityFirst: true,
 });
 
 export function loadViewPreferencesFrom(
@@ -30,9 +31,8 @@ export function loadViewPreferencesFrom(
       ...(value.groupBy === "project" || value.groupBy === "status"
         ? { groupBy: value.groupBy }
         : {}),
-      ...(typeof value.priorityFirst === "boolean"
-        ? { priorityFirst: value.priorityFirst }
-        : {}),
+      priorityFirst:
+        typeof value.priorityFirst === "boolean" ? value.priorityFirst : true,
       ...(Array.isArray(value.collapsedProjectGroups)
         ? {
             collapsedProjectGroups: [

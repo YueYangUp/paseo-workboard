@@ -298,15 +298,11 @@ for (const width of [1440, 390]) {
     await expect(lane.getByTestId(`${prefix}${ids[0]}`)).toBeVisible();
     await page
       .getByRole("button", {
-        name: `Priority: ${titles[0]} · Normal`,
+        name: `Priority: ${titles[0]} · P2`,
         exact: true,
       })
       .click();
-    await page.getByRole("button", { name: "High", exact: true }).click();
-    await page.getByTestId("workboard-sort-menu").click();
-    await page
-      .getByRole("radio", { name: "Priority first", exact: true })
-      .click();
+    await page.getByRole("button", { name: "P1", exact: true }).click();
     const order = () =>
       lane
         .locator(`[data-testid^="${prefix}"]`)
@@ -324,9 +320,19 @@ for (const width of [1440, 390]) {
         ),
       )
       .toEqual([`${prefix}${ids[0]}`, `${prefix}${ids[1]}`]);
-    await page.getByTestId("workboard-sort-menu").click();
     await page
-      .getByRole("radio", { name: "Default order", exact: true })
+      .getByRole("button", { name: "Settings", exact: true })
+      .last()
+      .click();
+    await expect(
+      page.getByTestId("workboard-priority-sorting").getByRole("switch"),
+    ).toHaveAttribute("aria-checked", "true");
+    await page
+      .getByTestId("workboard-priority-sorting")
+      .getByRole("switch")
+      .click();
+    await page
+      .getByRole("button", { name: "Back to board", exact: true })
       .click();
     const defaultIds = (await order()).filter((id) =>
       ids.some((value) => id === `${prefix}${value}`),
@@ -347,7 +353,60 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Settings", exact: true })
       .last()
       .click();
-    await page.getByTestId("workboard-edit-priority-high").click();
+    await page
+      .getByTestId("workboard-priority-sorting")
+      .getByRole("switch")
+      .click();
+    await page
+      .getByRole("button", { name: "Back to board", exact: true })
+      .click();
+    await page.getByTestId("workboard-view-list").click();
+    const listOrder = () =>
+      page
+        .locator('[data-testid^="workboard-list-task-"]')
+        .evaluateAll((nodes) =>
+          nodes.map((node) =>
+            (
+              node as unknown as { getAttribute(key: string): string | null }
+            ).getAttribute("data-testid"),
+          ),
+        );
+    await expect
+      .poll(async () =>
+        (await listOrder()).filter((id) =>
+          ids.some((value) => id === `workboard-list-task-${value}`),
+        ),
+      )
+      .toEqual([
+        `workboard-list-task-${ids[0]}`,
+        `workboard-list-task-${ids[1]}`,
+      ]);
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .last()
+      .click();
+    await page
+      .getByTestId("workboard-priority-sorting")
+      .getByRole("switch")
+      .click();
+    await page
+      .getByRole("button", { name: "Back to board", exact: true })
+      .click();
+    await expect
+      .poll(async () =>
+        (await listOrder()).filter((id) =>
+          ids.some((value) => id === `workboard-list-task-${value}`),
+        ),
+      )
+      .toEqual(
+        defaultIds.map((id) => id!.replace(prefix, "workboard-list-task-")),
+      );
+    await page.getByTestId("workboard-view-board").click();
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .last()
+      .click();
+    await page.getByTestId("workboard-edit-priority-p1").click();
     await page
       .getByTestId("workboard-priority-name")
       .getByRole("textbox")
@@ -357,15 +416,15 @@ for (const width of [1440, 390]) {
       .click();
     await page.getByTestId("workboard-save-priority").click();
     await expect(
-      page.getByTestId("workboard-edit-priority-high"),
-    ).toHaveAttribute("aria-label", "Edit: Urgent");
+      page.getByTestId("workboard-edit-priority-p1"),
+    ).toHaveAttribute("aria-label", "Edit: P1 · Urgent");
     await page.reload();
     await page.getByTestId("workboard-view-board").click();
     if (width === 390)
       await lane.getByRole("radio", { name: /^To do \(/ }).click();
     await expect(
       page.getByRole("button", {
-        name: `Priority: ${titles[0]} · Urgent`,
+        name: `Priority: ${titles[0]} · P1 · Urgent`,
         exact: true,
       }),
     ).toBeVisible();
@@ -373,12 +432,12 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Settings", exact: true })
       .last()
       .click();
-    await page.getByTestId("workboard-edit-priority-high").click();
+    await page.getByTestId("workboard-edit-priority-p1").click();
     await page.getByTestId("workboard-reset-priority").click();
     await page.getByTestId("workboard-save-priority").click();
     await expect(
-      page.getByTestId("workboard-edit-priority-high"),
-    ).toHaveAttribute("aria-label", "Edit: High");
+      page.getByTestId("workboard-edit-priority-p1"),
+    ).toHaveAttribute("aria-label", "Edit: P1");
     expect(
       await page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     ).toBe(false);
@@ -447,6 +506,19 @@ test("reorders cards after project scrolling and resizes columns with the pointe
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await openWorkboard(page);
+  await page
+    .getByRole("button", { name: "Settings", exact: true })
+    .last()
+    .click();
+  const prioritySorting = page
+    .getByTestId("workboard-priority-sorting")
+    .getByRole("switch");
+  await expect(prioritySorting).toHaveAttribute("aria-checked", "true");
+  await prioritySorting.click();
+  await expect(prioritySorting).toHaveAttribute("aria-checked", "false");
+  await page
+    .getByRole("button", { name: "Back to board", exact: true })
+    .click();
   await page.getByPlaceholder("Search tasks or projects").fill(prefix);
   await page.getByTestId("workboard-group-menu").click();
   await page
@@ -588,7 +660,7 @@ test("keeps pinned titles readable beside drag handles at default and minimum co
           exact: true,
         });
         const priority = task.getByRole("button", {
-          name: `Priority: ${card.title} · Normal`,
+          name: `Priority: ${card.title} · P2`,
           exact: true,
         });
         const pin = task.getByRole("button", {
@@ -694,4 +766,42 @@ test("opens the selected Agent conversation in its native workspace from Board a
       path: testInfo.outputPath(`selected-conversation-${mode}.png`),
     });
   }
+});
+
+test("explicit same-P2 selection creates the native P2 label on an imported workspace", async ({
+  page,
+}) => {
+  const title = `P2 example ${Date.now()}`;
+  const directory = path.join(home, "ui-priority-p2", String(Date.now()));
+  await mkdir(directory, { recursive: true });
+  const created = await client.createWorkspace({
+    source: { kind: "directory", path: directory },
+    title,
+  });
+  const workspaceId = created.workspace!.id;
+  await client.reloadPlugin(pluginId);
+  await expect
+    .poll(async () =>
+      (await snapshotIfReady())?.cards.some(
+        (c) => c.workspaceId === workspaceId,
+      ),
+    )
+    .toBe(true);
+  expect(
+    (await client.fetchWorkspaces()).entries.find((w) => w.id === workspaceId)
+      ?.labels ?? [],
+  ).toEqual([]);
+  await openWorkboard(page);
+  await page
+    .getByRole("button", { name: `Priority: ${title} · P2`, exact: true })
+    .click();
+  await page.getByRole("button", { name: "P2", exact: true }).click();
+  await expect
+    .poll(
+      async () =>
+        (await client.fetchWorkspaces()).entries.find(
+          (w) => w.id === workspaceId,
+        )?.labels,
+    )
+    .toEqual(["P2"]);
 });

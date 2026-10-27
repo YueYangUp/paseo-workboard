@@ -147,6 +147,11 @@ function projectChangeRequest(workspace?: Workspace): Card["changeRequest"] {
   const runtime = workspace?.githubRuntime;
   const request = runtime?.pullRequest;
   if (!request) return null;
+  const checks = request.checks ?? [];
+  const checkCounts = checks.length
+    ? { success: 0, failure: 0, pending: 0, skipped: 0, cancelled: 0 }
+    : null;
+  if (checkCounts) for (const check of checks) checkCounts[check.status]++;
   const nativeState = request.state.toLowerCase();
   const state =
     request.isMerged || nativeState === "merged"
@@ -165,6 +170,7 @@ function projectChangeRequest(workspace?: Workspace): Card["changeRequest"] {
     title: request.title,
     state,
     checksStatus: request.checksStatus ?? null,
+    checkCounts,
     reviewDecision: request.reviewDecision ?? null,
   };
 }
@@ -244,7 +250,9 @@ export class Workboard {
             task.issue = "native-archive-unknown";
           }
       });
-      const bindings = this.store.current.tasks.filter((t) => t.binding);
+      const bindings = this.store.current.tasks.filter(
+        (t) => t.binding && !t.priorityWrite,
+      );
       for (const task of bindings)
         this.bindingInFlight.add(task.binding!.operationId);
       for (const task of bindings) {
@@ -523,6 +531,13 @@ export class Workboard {
     }
     if (this.stopped) throw new Error("Workboard stopped");
     this.inventory = inventory;
+    const priorityResolutions: Array<{
+      taskId: string;
+      workspaceId: string;
+      priority: Priority;
+      label: string;
+      labels: string[];
+    }> = [];
     const resolutions: Array<{
       taskId: string;
       workspaceId: string;
@@ -559,7 +574,36 @@ export class Workboard {
             workspace.labels,
             data.settings.groups.map((group) => group.label),
           );
-          if ((task.priority ?? "normal") !== priority) {
+          const labels = priorityLabels(
+            workspace.labels,
+            data.settings.groups.map((group) => group.label),
+          );
+          if (!task.priorityWrite) {
+            if (labels.length <= 1) task.priorityLabelBaseline = labels;
+            else if (
+              !task.binding &&
+              task.priorityLabelBaseline &&
+              task.priorityLabelBaseline.every((label) =>
+                labels.some((current) => labelKey(label) === labelKey(current)),
+              )
+            ) {
+              const newcomers = labels.filter(
+                (label) =>
+                  !task.priorityLabelBaseline!.some(
+                    (prior) => labelKey(prior) === labelKey(label),
+                  ),
+              );
+              if (newcomers.length === 1)
+                priorityResolutions.push({
+                  taskId: task.id,
+                  workspaceId: workspace.id,
+                  priority: resolvePriority(newcomers),
+                  label: newcomers[0],
+                  labels,
+                });
+            }
+          }
+          if ((task.priority ?? "p2") !== priority) {
             task.priority = priority;
             task.updatedAt = this.stamp(task.updatedAt);
           }
@@ -670,6 +714,35 @@ export class Workboard {
     this.error = null;
     this.refreshedAt = this.stamp();
     if (resolutions.length) await this.resolveExclusivityConflicts(resolutions);
+    for (const resolution of priorityResolutions) {
+      if (this.stopped) return;
+      try {
+        const workspace = await this.transitionPriority(
+          resolution.workspaceId,
+          resolution.priority,
+          resolution.labels,
+          () => {},
+          resolution.label,
+        );
+        this.inventory.workspaces = this.inventory.workspaces.map((w) =>
+          w.id === workspace.id ? workspace : w,
+        );
+        await this.store.update((data) => {
+          const task = data.tasks.find((t) => t.id === resolution.taskId)!;
+          task.priority = resolution.priority;
+          task.priorityLabelBaseline = [resolution.label];
+          task.priorityWrite = null;
+          task.updatedAt = this.stamp(task.updatedAt);
+          task.issue =
+            this.observedIssue(task) ??
+            this.archiveDeferrals.get(task.id)?.reason ??
+            null;
+        });
+        this.changed(resolution.workspaceId);
+      } catch {
+        // An uncertain native write is retained for explicit user resolution, never retried.
+      }
+    }
   }
   /**
    * Newest-wins resolution of an exclusively conflicting status label: re-run the same
@@ -1371,6 +1444,15 @@ export class Workboard {
               if (current.updatedAt !== input.updatedAt)
                 throw new Error("Task changed; refresh before saving");
               current.priority = input.priority;
+              current.priorityWrite = null;
+              if (current.workspaceId)
+                current.priorityLabelBaseline = [
+                  PRIORITY_LABELS[input.priority],
+                ];
+              current.issue =
+                this.observedIssue(current) ??
+                this.archiveDeferrals.get(current.id)?.reason ??
+                null;
               current.updatedAt = this.stamp(current.updatedAt);
             });
           } else if (input.action === "edit") {
@@ -1392,7 +1474,7 @@ export class Workboard {
             if (!task.binding && task.workspaceId)
               throw new Error("Task already has a workspace");
             if (input.target.kind === "new")
-              this.checkPriorityTarget(task.priority ?? "normal");
+              this.checkPriorityTarget(task.priority ?? "p2");
             const stage =
               input.stage ??
               task.binding?.stage ??
@@ -1637,7 +1719,7 @@ export class Workboard {
     this.bindingInFlight.add(binding.operationId);
     try {
       if (binding.target.kind === "new")
-        this.checkPriorityTarget(draft.priority ?? "normal");
+        this.checkPriorityTarget(draft.priority ?? "p2");
       const workspaceId =
         binding.workspaceId ??
         (binding.target.kind === "existing"
@@ -1695,7 +1777,7 @@ export class Workboard {
           if (!fresh) throw new Error("Binding workspace is unavailable");
           await this.transitionPriority(
             workspaceId,
-            this.task(survivorId).priority ?? "normal",
+            this.task(survivorId).priority ?? "p2",
             priorityLabels(
               fresh.labels,
               this.store.current.settings.groups.map((group) => group.label),
@@ -1705,6 +1787,12 @@ export class Workboard {
         await this.store.update((data) => {
           const task = data.tasks.find((t) => t.id === survivorId)!;
           task.binding = null;
+          if (binding.target.kind === "new") {
+            task.priorityLabelBaseline = [
+              PRIORITY_LABELS[task.priority ?? "p2"],
+            ];
+            task.priorityWrite = null;
+          }
           // The verified sync made binding.stage a clean observation: move
           // both stage fields with it, or an external label change arriving
           // before the next reconciliation would be attributed against the
@@ -1721,12 +1809,13 @@ export class Workboard {
       this.bindingInFlight.delete(binding.operationId);
     }
   }
-  private checkPriorityTarget(priority: Priority): void {
+  private checkPriorityTarget(
+    priority: Priority,
+    target = PRIORITY_LABELS[priority],
+  ): void {
     if (
-      priority !== "normal" &&
       this.store.current.settings.groups.some(
-        (group) =>
-          labelKey(group.label) === labelKey(PRIORITY_LABELS[priority]),
+        (group) => labelKey(group.label) === labelKey(target),
       )
     )
       throw new Error(
@@ -1738,8 +1827,9 @@ export class Workboard {
     priority: Priority,
     expected: string[],
     check: () => void = () => {},
+    target = PRIORITY_LABELS[priority],
   ): Promise<Workspace> {
-    this.checkPriorityTarget(priority);
+    this.checkPriorityTarget(priority, target);
     const statusNames = this.store.current.settings.groups.map(
       (group) => group.label,
     );
@@ -1751,17 +1841,20 @@ export class Workboard {
       throw new Error(
         "Workspace priority labels changed; refresh before saving",
       );
-    const target = PRIORITY_LABELS[priority];
     let observed = priorityLabels(workspace.labels, statusNames);
     const operations = observed
       .filter((name) => labelKey(name) !== labelKey(target))
       .map((name) => ({ name, assigned: false }));
-    // Normal is implicit when no priority label is assigned.
-    if (
-      priority !== "normal" &&
-      !observed.some((name) => labelKey(name) === labelKey(target))
-    )
+    if (!observed.some((name) => labelKey(name) === labelKey(target)))
       operations.unshift({ name: target, assigned: true });
+    if (operations.length) {
+      await this.store.update((data) => {
+        check();
+        const task = data.tasks.find((task) => task.workspaceId === id)!;
+        task.priorityWrite = { operationId: randomUUID(), priority };
+        task.issue = "priority-sync-uncertain";
+      });
+    }
     for (const operation of operations) {
       workspace = await this.host.workspace(id);
       check();
@@ -1793,8 +1886,7 @@ export class Workboard {
     check();
     if (
       !workspace ||
-      resolvePriority(workspace.labels, statusNames) !== priority ||
-      priorityLabels(workspace.labels, statusNames).length > 1
+      !labelsEqual(priorityLabels(workspace.labels, statusNames), [target])
     )
       throw new Error("Priority synchronization could not be verified");
     return workspace;
@@ -1907,15 +1999,17 @@ export class Workboard {
   private observedIssue(task: Task): string | null {
     return task.archived?.status === "uncertain"
       ? "native-archive-unknown"
-      : task.binding
-        ? "label-sync-incomplete"
-        : task.lastStage === "conflict"
-          ? "labels-conflict"
-          : task.conversationStatus === "unknown"
-            ? "conversation-unknown"
-            : task.conversationStatus === "none"
-              ? "no-conversation"
-              : null;
+      : task.priorityWrite
+        ? "priority-sync-uncertain"
+        : task.binding
+          ? "label-sync-incomplete"
+          : task.lastStage === "conflict"
+            ? "labels-conflict"
+            : task.conversationStatus === "unknown"
+              ? "conversation-unknown"
+              : task.conversationStatus === "none"
+                ? "no-conversation"
+                : null;
   }
   /** Clear only this process's obsolete deferrals and their owned warning. */
   private pruneArchiveDeferrals(

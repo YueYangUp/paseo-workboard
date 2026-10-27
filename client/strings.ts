@@ -11,11 +11,13 @@ const zh = {
   groupByProject: "按项目分组",
   groupByStatus: "按状态分组",
   priorityFirst: "优先级排序",
+  prioritySortHint:
+    "默认开启，按 P0 → P3 排序，同级保留已保存的默认顺序。适用于看板、项目泳道和列表；关闭后可在同组内手动排序。",
   priority: "优先级",
-  priorities: { high: "高", normal: "普通", low: "低" },
+  priorities: { p0: "P0", p1: "P1", p2: "P2", p3: "P3" },
   prioritySettings: "优先级",
   prioritySettingsHint:
-    "从上到下按优先级排序。自定义名称和颜色会同步到所有任务，不改变已有任务的等级和默认顺序。",
+    "P0 最高，P2 为默认值。自定义名称和颜色会同步到所有任务，Pn 编号始终可见。优先级标签始终互斥；冲突无法自动判断时，请重新选择。",
   priorityName: "名称",
   priorityColor: "颜色",
   priorityNameInvalid: "请输入 1–24 个字符的名称。",
@@ -140,6 +142,13 @@ const zh = {
     unknown: "状态未知",
   },
   checks: { pending: "CI 进行中", success: "CI 通过", failure: "CI 失败" },
+  checkCounts: {
+    success: "{count}成功",
+    failure: "{count}失败",
+    pending: "{count}进行中",
+    skipped: "{count}跳过",
+    cancelled: "{count}已取消",
+  },
   reviews: {
     approved: "评审通过",
     changes_requested: "需要修改",
@@ -305,6 +314,7 @@ const zh = {
     "conversation-unknown": "对话时间待核实",
     "labels-conflict": "标签冲突",
     "priority-labels-conflict": "优先级标签冲突，请重新选择优先级",
+    "priority-sync-uncertain": "优先级写入结果未知，请刷新并重新选择优先级",
     "agent-busy": "Agent 仍在工作",
     "terminal-open": "请先关闭 terminal",
     "script-running": "workspace script 仍在运行",
@@ -467,11 +477,13 @@ const en: typeof zh = {
   groupByProject: "Group by project",
   groupByStatus: "Group by status",
   priorityFirst: "Priority first",
+  prioritySortHint:
+    "Enabled by default: P0 → P3, retaining saved default order within each level. Applies to Board, project lanes and List. Turn off to reorder tasks within a group.",
   priority: "Priority",
-  priorities: { high: "High", normal: "Normal", low: "Low" },
+  priorities: { p0: "P0", p1: "P1", p2: "P2", p3: "P3" },
   prioritySettings: "Priorities",
   prioritySettingsHint:
-    "Ordered from highest to lowest. Custom names and colors apply to all tasks without changing their levels or default order.",
+    "P0 is highest; P2 is the default. Custom names and colors apply to all tasks; the Pn code stays visible. Priority labels are always exclusive; choose explicitly when a conflict cannot be attributed.",
   priorityName: "Name",
   priorityColor: "Color",
   priorityNameInvalid: "Enter a name of 1–24 characters.",
@@ -608,6 +620,13 @@ const en: typeof zh = {
     unknown: "Unknown state",
   },
   checks: { pending: "CI pending", success: "CI passed", failure: "CI failed" },
+  checkCounts: {
+    success: "{count} passed",
+    failure: "{count} failed",
+    pending: "{count} pending",
+    skipped: "{count} skipped",
+    cancelled: "{count} cancelled",
+  },
   reviews: {
     approved: "Approved",
     changes_requested: "Changes requested",
@@ -782,6 +801,8 @@ const en: typeof zh = {
     "conversation-unknown": "Conversation time needs verification",
     "labels-conflict": "Label conflict",
     "priority-labels-conflict": "Priority label conflict; choose a priority",
+    "priority-sync-uncertain":
+      "Priority write outcome unknown; refresh and choose a priority",
     "agent-busy": "An agent is still working",
     "terminal-open": "Close the terminal first",
     "script-running": "A workspace script is still running",
