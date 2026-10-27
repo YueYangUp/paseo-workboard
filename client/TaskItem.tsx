@@ -92,7 +92,7 @@ export function TaskItem({
     <PriorityPicker
       title={card.title}
       value={card.priority}
-      conflicted={priorityLabels(card.labels).length > 1}
+      conflicted={priorityLabels(card.labels, card.managedLabels).length > 1}
       priorityStyles={board.settings.priorityStyles}
       onChange={onPriorityChange}
       disabled={
@@ -136,7 +136,7 @@ export function TaskItem({
     card.issue === "no-conversation" || card.issue === "conversation-unknown"
       ? null
       : issueText(card.issue, t),
-    priorityLabels(card.labels).length > 1
+    priorityLabels(card.labels, card.managedLabels).length > 1
       ? t.issues["priority-labels-conflict"]
       : null,
   ]
@@ -734,7 +734,6 @@ export function TaskItem({
       <View
         style={[styles.cardTitleRow, { paddingRight: showDragHandle ? 30 : 0 }]}
       >
-        {priorityPicker}
         <HintButton
           hint={isDraft ? t.edit : t.openWorkspace}
           onHoverIn={() => setTitleHovered(true)}
@@ -755,16 +754,6 @@ export function TaskItem({
             {card.title}
           </Text>
         </HintButton>
-        {card.pinState !== "none" && (
-          <HintButton
-            hint={pinHint}
-            accessibilityRole="button"
-            accessibilityLabel={pinHint}
-            style={styles.pinAction}
-          >
-            <Icon name="Pin" size={13} color={theme.colors.foregroundMuted} />
-          </HintButton>
-        )}
         {pending && (
           <View
             accessible
@@ -777,6 +766,19 @@ export function TaskItem({
               color={theme.colors.foregroundMuted}
             />
           </View>
+        )}
+      </View>
+      <View style={styles.cardPriorityRow}>
+        {priorityPicker}
+        {card.pinState !== "none" && (
+          <HintButton
+            hint={pinHint}
+            accessibilityRole="button"
+            accessibilityLabel={pinHint}
+            style={styles.pinAction}
+          >
+            <Icon name="Pin" size={13} color={theme.colors.foregroundMuted} />
+          </HintButton>
         )}
       </View>
       <Text
@@ -1019,6 +1021,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   cardTitlePressable: { flex: 1, minWidth: 0 },
+  cardPriorityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+  },
   cardTitle: { fontWeight: "600", fontSize: 14, lineHeight: 18 },
   cardMeta: { fontSize: 12, lineHeight: 16 },
   changeRequest: {
@@ -1047,7 +1055,6 @@ const styles = StyleSheet.create({
     minHeight: 36,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -5,
   },
   reasonAction: {
     minHeight: 36,

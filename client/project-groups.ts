@@ -36,20 +36,19 @@ export function taskSections(input: {
     input.projects.map((project) => [project.id, project.name]),
   );
   const counts = new Map<string, number>();
+  const stages = new Set(input.groups.map((group) => group.id));
   for (const card of input.fullCards) {
     if (
+      !stages.has(card.stage) ||
       card.archived?.status === "archived" ||
       card.archived?.status === "external"
     )
       continue;
     counts.set(key(card), (counts.get(key(card)) ?? 0) + 1);
   }
-  const ordered = [
-    ...input.groups.flatMap((group) =>
-      cardsForStage(input.cards, group.id, input.cardOrderByStage),
-    ),
-    ...input.cards.filter((card) => card.stage === "conflict"),
-  ];
+  const ordered = input.groups.flatMap((group) =>
+    cardsForStage(input.cards, group.id, input.cardOrderByStage),
+  );
   for (const card of ordered) {
     const id = key(card);
     if (!sections.has(id))

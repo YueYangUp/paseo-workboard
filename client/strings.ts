@@ -388,6 +388,8 @@ const zh = {
     "Binding is pending": "正在关联工作区，请稍后重试。",
     "Priority labels are reserved; choose a different status label":
       "优先级标签是保留标签，请为状态选择其他标签。",
+    "Priority label is used by a status group; rename its status label first":
+      "此优先级标签已被状态分组占用，请先修改该分组的状态标签。",
     "Task changed; refresh before saving": "任务已变化，请刷新后再保存。",
     "Task already has a workspace": "任务已绑定 workspace，请刷新。",
     "Add an In progress group before starting work":
@@ -871,6 +873,8 @@ const en: typeof zh = {
     "Binding is pending": "Workspace binding is pending. Try again later.",
     "Priority labels are reserved; choose a different status label":
       "Priority labels are reserved. Choose a different status label.",
+    "Priority label is used by a status group; rename its status label first":
+      "This priority label is used by a status group. Rename that group's status label first.",
     "Task changed; refresh before saving":
       "The task changed. Refresh before saving.",
     "Task already has a workspace":

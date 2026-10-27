@@ -1172,7 +1172,7 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
                 taskId: card.id,
                 updatedAt: card.updatedAt,
                 priority,
-                expectedLabels: priorityLabels(card.labels),
+                expectedLabels: priorityLabels(card.labels, card.managedLabels),
               }))
             }
             onStart={() => setStarting({ card })}
