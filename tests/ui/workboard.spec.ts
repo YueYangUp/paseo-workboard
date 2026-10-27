@@ -5,6 +5,10 @@ import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { cardsForStage, type Board } from "../../shared/model";
+import {
+  DEFAULT_COLUMN_WIDTH,
+  MIN_COLUMN_WIDTH,
+} from "../../client/board-utils";
 import { isTemporaryIntegrationHome } from "../integration/temporary-home";
 
 const run = promisify(execFile);
@@ -523,4 +527,92 @@ test("reorders cards after project scrolling and resizes columns with the pointe
     .poll(async () => Math.round((await column.boundingBox())!.width))
     .toBe(Math.round(initialWidth + 60));
   expect(pageErrors).toEqual([]);
+});
+
+test("keeps pinned titles readable beside drag handles at default and minimum column widths", async ({
+  page,
+}) => {
+  const stamp = Date.now();
+  const ids: string[] = [];
+  for (const [index, title] of [
+    "Pinned example task title",
+    "置顶示例任务标题",
+  ].entries()) {
+    const directory = path.join(home, `pinned-layout-${stamp}-${index}`);
+    await mkdir(directory, { recursive: true });
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      title,
+    });
+    const workspaceId = created.workspace!.id;
+    await client.setWorkspacePinned(workspaceId, true);
+    await client.setWorkspaceLabel({
+      workspaceId,
+      label: { name: "task:todo", color: "blue" },
+      assigned: true,
+    });
+    ids.push(workspaceId);
+  }
+  await client.reloadPlugin(pluginId);
+  await expect
+    .poll(
+      async () =>
+        (await snapshotIfReady())?.cards.filter((c) =>
+          ids.includes(c.workspaceId!),
+        ).length,
+    )
+    .toBe(2);
+  const cards = (await snapshot()).cards.filter((c) =>
+    ids.includes(c.workspaceId!),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openWorkboard(page);
+  const column = page.getByTestId("workboard-column-todo");
+  const resize = column.getByTestId("workboard-resize-todo");
+  for (const theme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    // The keyboard reset uses the same persisted width path as the pointer control.
+    await resize.press("Home");
+    for (const width of [DEFAULT_COLUMN_WIDTH, MIN_COLUMN_WIDTH]) {
+      if (width === MIN_COLUMN_WIDTH) {
+        await resize.press("ArrowLeft");
+        await resize.press("ArrowLeft");
+      }
+      await expect
+        .poll(async () => Math.round((await column.boundingBox())!.width))
+        .toBe(width);
+      for (const card of cards) {
+        const task = column.getByTestId(`workboard-card-${card.id}`);
+        const title = task.getByRole("button", {
+          name: `Open workspace: ${card.title}`,
+          exact: true,
+        });
+        const priority = task.getByRole("button", {
+          name: `Priority: ${card.title} · Normal`,
+          exact: true,
+        });
+        const pin = task.getByRole("button", {
+          name: /^Paseo sidebar: existing or manual pin/,
+        });
+        await expect(title).toBeVisible();
+        const titleBox = (await title.boundingBox())!;
+        const priorityBox = (await priority.boundingBox())!;
+        const pinBox = (await pin.boundingBox())!;
+        const dragBox = (await column
+          .getByTestId(`workboard-drag-${card.id}`)
+          .boundingBox())!;
+        expect(titleBox.width).toBeGreaterThanOrEqual(110);
+        expect(priorityBox.y).toBeGreaterThanOrEqual(
+          titleBox.y + titleBox.height - 1,
+        );
+        expect(pinBox.y).toBeGreaterThanOrEqual(
+          titleBox.y + titleBox.height - 1,
+        );
+        expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(dragBox.x + 1);
+        expect(priorityBox.height).toBeGreaterThanOrEqual(36);
+        expect(pinBox.width).toBeGreaterThanOrEqual(36);
+        expect(pinBox.height).toBeGreaterThanOrEqual(36);
+      }
+    }
+  }
 });
